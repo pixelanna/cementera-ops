@@ -68,6 +68,47 @@ CREATE TABLE IF NOT EXISTS agenda (
 )""")
 conn.commit()
 
+def recalc_and_update_agenda(conn, agenda_id, fecha_str, hora_Q, min_viaje_ida, volumen_m3,
+                             requiere_bomba, dosif_codigo, mixer_id):
+    """Recalcula R..X y actualiza la fila en agenda."""
+    # Lee parámetros
+    tiempo_descarga_min    = float(get_param(conn, "Tiempo_descarga_min",    20))
+    margen_lavado_min      = float(get_param(conn, "Margen_lavado_min",      10))
+    tiempo_cambio_obra_min = float(get_param(conn, "Tiempo_cambio_obra_min", 5))
+
+    # Recalcular
+    R, S, T, U, V, W, X = calcular_tiempos(
+        hora_Q,
+        int(min_viaje_ida),
+        float(volumen_m3),
+        int(tiempo_descarga_min),
+        int(margen_lavado_min),
+        int(tiempo_cambio_obra_min),
+    )
+    fecha_hora_q = f"{fecha_str} {hora_Q}"
+    ciclo_total_min = int((X - S).total_seconds() // 60)
+    min_viaje_regreso = int(min_viaje_ida)
+
+    cur = conn.cursor()
+    cur.execute("""
+        UPDATE agenda
+        SET cliente = cliente,      -- no lo tocamos aquí (puedes ampliarlo si quieres)
+            proyecto = proyecto,    -- idem
+            fecha = ?, hora_Q = ?, min_viaje_ida = ?, volumen_m3 = ?, requiere_bomba = ?,
+            dosificadora = ?, mixer_id = ?,
+            hora_R = ?, hora_S = ?, hora_T = ?, hora_U = ?, hora_V = ?, hora_W = ?, hora_X = ?,
+            estado = 'Programado', fecha_hora_q = ?, ciclo_total_min = ?, min_viaje_regreso = ?, dosif_codigo = ?
+        WHERE id = ?
+    """, (
+        fecha_str, hora_Q, int(min_viaje_ida), float(volumen_m3), requiere_bomba,
+        dosif_codigo, int(mixer_id),
+        R.strftime("%H:%M"), S.strftime("%H:%M"), T.strftime("%H:%M"),
+        U.strftime("%H:%M"), V.strftime("%H:%M"), W.strftime("%H:%M"), X.strftime("%H:%M"),
+        fecha_hora_q, ciclo_total_min, min_viaje_regreso, dosif_codigo,
+        int(agenda_id)
+    ))
+    conn.commit()
+
 def get_param(conn, name: str, default=None):
     """
     Lee un parámetro por nombre (case-insensitive).
@@ -292,7 +333,7 @@ def calcular_tiempos(hora_Q, min_viaje_ida, volumen_m3,
 # ---------------------------------------------------
 # UI
 # ---------------------------------------------------
-tabs = st.tabs(["⚙️ Parámetros", "🚛 Mixers", "🏗️ Nuevo Proyecto", "📅 Calendario Día"])
+tabs = st.tabs(["⚙️ Parámetros", "🚛 Mixers", "🏗️ Nuevo Proyecto", "📅 Calendario Día", "🗓️ Calendario Mes"])
 
 # 1) Parámetros
 with tabs[0]:
@@ -664,3 +705,136 @@ with tabs[3]:
         df_grid_d = pd.DataFrame(rows_d, columns=["Hora", ":00", ":15", ":30", ":45"])
         st.dataframe(df_grid_d, use_container_width=True, hide_index=True)
         st.caption("■ = ocupado | · = libre (según [S..T])")
+
+    st.markdown("---")
+st.markdown("## 📝 Editar / Eliminar viaje del día")
+
+# Cargamos viajes del día con más info para editar
+df_edit = pd.read_sql("""
+    SELECT a.id, a.cliente, a.proyecto, a.fecha, a.hora_Q, a.min_viaje_ida, a.volumen_m3,
+           a.requiere_bomba, a.dosif_codigo, a.mixer_id,
+           a.hora_S, a.hora_T, a.hora_X
+    FROM agenda a
+    WHERE a.fecha = ?
+    ORDER BY a.hora_Q, a.proyecto, a.mixer_id
+""", conn, params=(fecha_sel,))
+
+if df_edit.empty:
+    st.info("No hay viajes para editar/eliminar en esta fecha.")
+else:
+    # Para etiquetas legibles de mixer
+    df_mix_lbl = pd.read_sql("SELECT id, unidad_id, placa FROM mixers", conn)
+    id2mixer = {int(r["id"]): f"{r['unidad_id'] or 's/n'} ({r['placa']})" for _, r in df_mix_lbl.iterrows()}
+
+    df_edit["Mixer_label"] = df_edit["mixer_id"].map(id2mixer)
+    opciones = {
+        f"[{r['hora_Q']}] {r['proyecto']} — {r['Mixer_label']} (S:{r['hora_S']} → X:{r['hora_X']})": int(r["id"])
+        for _, r in df_edit.iterrows()
+    }
+
+    colsel, colact = st.columns([2,1])
+    with colsel:
+        etq = st.selectbox("Selecciona un viaje", list(opciones.keys()), key="edit_viaje_sel")
+        agenda_id = opciones[etq]
+
+    # Cargar fila elegida
+    row = df_edit[df_edit["id"] == agenda_id].iloc[0]
+
+    # Form para edición rápida
+    c1, c2, c3 = st.columns(3)
+    with c1:
+        hora_Q_new = st.text_input("Hora en obra (HH:MM)", value=row["hora_Q"])
+        min_ida_new = st.number_input("Min viaje ida", 0, 240, int(row["min_viaje_ida"]))
+        vol_new = st.number_input("Volumen (m³)", 1.0, 12.0, float(row["volumen_m3"]), step=0.5)
+    with c2:
+        req_bomba_new = st.selectbox("¿Requiere bomba?", ["NO", "YES"], index=0 if row["requiere_bomba"]=="NO" else 1)
+        dosif_new = st.selectbox("Dosificadora", ["DF-01", "DF-06"], index=0 if (row["dosif_codigo"] or "DF-01")=="DF-01" else 1)
+        # Mixers habilitados en selector
+        df_mix_hab = pd.read_sql("SELECT id, unidad_id, placa, habilitado, capacidad_m3, tipo FROM mixers ORDER BY id", conn)
+        mix_opts = {f"{(r['unidad_id'] or 's/n')} — {r['placa']} ({r['capacidad_m3']} m³, {r['tipo']})": int(r["id"])
+                    for _, r in df_mix_hab.iterrows() if int(r["habilitado"])==1}
+        mixer_lbl_default = id2mixer.get(int(row["mixer_id"]), "s/n")
+        idx_default = 0 if not mix_opts else list(mix_opts.values()).index(int(row["mixer_id"])) if int(row["mixer_id"]) in mix_opts.values() else 0
+        mixer_lbl = st.selectbox("Mixer", list(mix_opts.keys()), index=idx_default)
+        mixer_new = mix_opts[mixer_lbl]
+    with c3:
+        fecha_new = st.date_input("Fecha del viaje", datetime.strptime(row["fecha"], "%Y-%m-%d"), key=f"edit_fecha_{agenda_id}")
+
+    b1, b2 = st.columns([1,1])
+    with b1:
+        if st.button("💾 Guardar cambios"):
+            try:
+                recalc_and_update_agenda(
+                    conn, agenda_id,
+                    fecha_new.strftime("%Y-%m-%d"),
+                    hora_Q_new.strip(),
+                    int(min_ida_new),
+                    float(vol_new),
+                    req_bomba_new,
+                    dosif_new,
+                    int(mixer_new)
+                )
+                st.success("Viaje actualizado.")
+                st.rerun()
+            except Exception as e:
+                st.error(f"No se pudo actualizar: {e}")
+
+    with b2:
+        # Bloqueo borrar sin confirmar
+        conf = st.checkbox("Confirmo eliminar este viaje permanentemente")
+        if st.button("🗑️ Eliminar viaje", disabled=not conf):
+            cur = conn.cursor()
+            cur.execute("DELETE FROM agenda WHERE id=?", (int(agenda_id),))
+            conn.commit()
+            st.success("Viaje eliminado.")
+            st.rerun()
+
+# 5) Calendario del mes
+
+    with tabs[4]:
+    st.subheader("Calendario del mes — agrupado por proyectos")
+
+    # Selecciona una fecha de referencia (usamos su mes)
+    ref = st.date_input("Mes de referencia", datetime.now(), key="cal_mes_ref")
+    y, m = ref.year, ref.month
+    first = datetime(y, m, 1)
+    if m == 12:
+        last = datetime(y + 1, 1, 1) - timedelta(days=1)
+    else:
+        last = datetime(y, m + 1, 1) - timedelta(days=1)
+
+    date_from = first.strftime("%Y-%m-%d")
+    date_to = last.strftime("%Y-%m-%d")
+
+    dfm = pd.read_sql("""
+        SELECT a.proyecto, a.fecha, a.volumen_m3, a.mixer_id,
+               a.hora_S, a.hora_X
+        FROM agenda a
+        WHERE a.fecha BETWEEN ? AND ?
+        ORDER BY a.fecha, a.hora_S
+    """, conn, params=(date_from, date_to))
+
+    if dfm.empty:
+        st.info("No hay viajes registrados para este mes.")
+    else:
+        dmx = pd.read_sql("SELECT id, unidad_id, placa FROM mixers", conn)
+        id2lbl = {int(r["id"]): f"{r['unidad_id'] or 's/n'} ({r['placa']})" for _, r in dmx.iterrows()}
+        dfm["Mixer"] = dfm["mixer_id"].map(id2lbl)
+        dfm["Mixer_SX"] = dfm.apply(lambda r: f"{r['Mixer']} [S:{r['hora_S']}→X:{r['hora_X']}]", axis=1)
+
+        agg = (dfm.groupby(["fecha", "proyecto"], as_index=False)
+                  .agg(
+                      m3_total=("volumen_m3", "sum"),
+                      mixers=("Mixer_SX", lambda s: ", ".join(s))
+                  )
+               )
+
+        agg.rename(columns={
+            "fecha": "Fecha",
+            "proyecto": "Proyecto",
+            "m3_total": "Total m³",
+            "mixers": "Mixers (S→X)"
+        }, inplace=True)
+
+        st.dataframe(agg, use_container_width=True, hide_index=True)
+        st.caption("Cada fila = un proyecto en un día. Muestra total de m³ y mixers con sus ventanas S→X.")
