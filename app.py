@@ -257,7 +257,7 @@ with tabs[0]:
 with tabs[1]:
     st.subheader("Listado de Mixers")
 
-    # --- Patch de esquema: agregar Unidad y único por Unidad (si no existían)
+    # --- Asegurar columna unidad_id e índice único por Unidad (si no existían; no muestra nada al usuario)
     cur = conn.cursor()
     cur.execute("PRAGMA table_info(mixers)")
     cols = [r[1].lower() for r in cur.fetchall()]
@@ -267,110 +267,82 @@ with tabs[1]:
     cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_mixers_unidad ON mixers(unidad_id)")
     conn.commit()
 
-    # --- Carga rápida desde Excel (pegar)
-    with st.expander("📥 Carga rápida desde Excel (pegar aquí)"):
-        st.caption("Formato: **ID | Placa | Capacidad_m3 | Tipo** (ej: `218 25 | HAA1234 | 10 | SANY`). Se ignora 'Activo'.")
-        pegado = st.text_area(
-            "Pega tus filas (una por línea):",
-            height=200,
-            placeholder="218 25 | HAA1234 | 10 | SANY\nMX 25 | HAA3456 | 8.5 | STD\n..."
-        )
-        col_hab, _ = st.columns([1,3])
-        with col_hab:
-            habilitar_todo = st.checkbox("Habilitar todos al cargar", value=True)
-        if st.button("Cargar/Actualizar mixers"):
-            if not pegado.strip():
-                st.warning("No hay texto para procesar.")
-            else:
-                ok, err = 0, 0
-                for line in pegado.splitlines():
-                    if not line.strip():
-                        continue
-                    parts = [p.strip() for p in line.replace("\t","|").replace(";", "|").replace(",", "|").split("|")]
-                    if len(parts) < 4:
-                        err += 1
-                        continue
-                    unidad_id, placa, cap_str, tipo = parts[0], parts[1], parts[2], parts[3]
-                    try:
-                        upsert_mixer_by_unidad(conn, unidad_id, placa, float(cap_str), tipo, 1 if habilitar_todo else 0)
-                        ok += 1
-                    except Exception:
-                        err += 1
-                st.success(f"Carga completada: {ok} OK, {err} con error.")
-                st.rerun()
+    # --- Leer datos base (sin 'activo'; no lo usamos más)
+    dfm = pd.read_sql("""
+        SELECT id, unidad_id, placa, habilitado, capacidad_m3, tipo
+        FROM mixers
+        ORDER BY id
+    """, conn)
 
-    # --- Leer datos y métricas (solo HABILITADO)
-    dfm = pd.read_sql("SELECT id, unidad_id, placa, habilitado, capacidad_m3, tipo FROM mixers ORDER BY id", conn)
+    # Métricas con habilitado=1
+    total_habilitados = int((dfm["habilitado"] == 1).sum()) if not dfm.empty else 0
+    volumen_habilitado = float(dfm.loc[dfm["habilitado"] == 1, "capacidad_m3"].sum()) if not dfm.empty else 0.0
 
-    if dfm.empty:
-        total_disponibles = 0
-        volumen_disponible = 0.0
-    else:
-        total_disponibles = int((dfm["habilitado"] == 1).sum())
-        volumen_disponible = float(dfm.loc[dfm["habilitado"] == 1, "capacidad_m3"].sum())
+    c1, c2, _ = st.columns([1,1,2])
+    c1.metric("Mixers habilitados", total_habilitados)
+    c2.metric("Volumen habilitado (m³)", f"{volumen_habilitado:.1f}")
 
-    m1, m2, _ = st.columns([1, 1, 2])
-    m1.metric("Mixers habilitados", total_disponibles)
-    m2.metric("Volumen habilitado (m³)", f"{volumen_disponible:.1f}")
-
-    # --- Vista amigable sin índice
+    # --- Vista amigable: ocultamos ID real y agregamos N° (1..n)
     view = dfm.copy()
+    view.insert(0, "N°", range(1, len(view) + 1))  # numeración visual
+    view["Habilitado (SI/NO)"] = view["habilitado"].apply(lambda x: "YES" if int(x) == 1 else "NO")
     view.rename(columns={
-        "id": "MixerID",
         "unidad_id": "Unidad",
         "placa": "Placa",
         "capacidad_m3": "Capacidad_m3",
         "tipo": "Tipo",
-        "habilitado": "Habilitado_flag"
     }, inplace=True)
-    view["Habilitado (SI/NO)"] = view["Habilitado_flag"].apply(lambda x: "YES" if int(x) == 1 else "NO")
-    view = view[["MixerID", "Unidad", "Placa", "Habilitado (SI/NO)", "Capacidad_m3", "Tipo"]]
 
+    # Columnas a mostrar (sin ID)
+    view_show = view[["N°", "Unidad", "Placa", "Habilitado (SI/NO)", "Capacidad_m3", "Tipo"]]
+
+    # Mostrar tabla sin índice (0..n-1) y sin columna ID
     try:
-        st.dataframe(view, use_container_width=True, hide_index=True)
+        st.dataframe(view_show, use_container_width=True, hide_index=True)
     except TypeError:
-        st.dataframe(view.style.hide(axis="index"), use_container_width=True)
+        st.dataframe(view_show.style.hide(axis="index"), use_container_width=True)
 
+    # --- Acciones: alternar habilitado (sin mostrar ID)
     st.markdown("### 🔁 Alternar habilitado")
+
     if dfm.empty:
         st.info("No hay mixers cargados.")
     else:
+        # Mapeo etiqueta → id (sin mostrar ID en la etiqueta)
         opciones = {
-            f"ID {int(r.MixerID)} — {r.Unidad or 's/n'} — {r.Placa} ({r.Capacidad_m3} m³, {r.Tipo}) — "
-            f"{'HABILITADO' if dfm.loc[dfm['id']==int(r.MixerID),'habilitado'].iloc[0]==1 else 'DESHABILITADO'}"
-            : int(r.MixerID)
-            for _, r in view.iterrows()
+            f"{(row['unidad_id'] or 's/n')} — {row['placa']} ({row['capacidad_m3']} m³, {row['tipo']}) — "
+            f"{'HABILITADO' if int(row['habilitado'])==1 else 'DESHABILITADO'}": int(row["id"])
+            for _, row in dfm.iterrows()
         }
-        sel = st.selectbox("Selecciona un mixer", list(opciones.keys()))
-        mixer_id = opciones[sel]
+        etiqueta_sel = st.selectbox("Selecciona un mixer", list(opciones.keys()))
+        mixer_id = opciones[etiqueta_sel]
 
-        # Leer estado actual y alternar
         cur.execute("SELECT habilitado FROM mixers WHERE id=?", (mixer_id,))
         row = cur.fetchone()
         if row is None:
             st.error("No se pudo leer el estado del mixer seleccionado.")
         else:
             estado = int(row[0])
-            etiqueta = "DESHABILITAR" if estado == 1 else "HABILITAR"
-            if st.button(etiqueta):
+            etiqueta_btn = "DESHABILITAR" if estado == 1 else "HABILITAR"
+            if st.button(etiqueta_btn):
                 nuevo = 0 if estado == 1 else 1
                 cur.execute("UPDATE mixers SET habilitado=? WHERE id=?", (nuevo, mixer_id))
                 conn.commit()
-                st.success(f"Mixer {mixer_id} {'habilitado' if nuevo==1 else 'deshabilitado'}.")
+                st.success(f"Mixer {'habilitado' if nuevo==1 else 'deshabilitado'}.")
                 st.rerun()
 
+    # --- Eliminar mixer (sin mostrar ID)
     st.markdown("### 🗑️ Eliminar mixer")
-    if not dfm.empty:
-        # Selecciona mixer a eliminar
-        opciones_del = {
-            f"ID {int(r.MixerID)} — {r.Unidad or 's/n'} — {r.Placa} ({r.Capacidad_m3} m³, {r.Tipo})"
-            : int(r.MixerID)
-            for _, r in view.iterrows()
-        }
-        sel_del = st.selectbox("Mixer a eliminar", list(opciones_del.keys()), key="del_sel")
-        mixer_id_del = opciones_del[sel_del]
 
-        # Verifica si tiene viajes en agenda
+    if not dfm.empty:
+        opciones_del = {
+            f"{(row['unidad_id'] or 's/n')} — {row['placa']} ({row['capacidad_m3']} m³, {row['tipo']})": int(row["id"])
+            for _, row in dfm.iterrows()
+        }
+        etiqueta_sel_del = st.selectbox("Mixer a eliminar", list(opciones_del.keys()), key="del_sel")
+        mixer_id_del = opciones_del[etiqueta_sel_del]
+
+        # Verificar viajes asociados
         cur.execute("SELECT COUNT(*) FROM agenda WHERE mixer_id = ?", (mixer_id_del,))
         cnt = cur.fetchone()[0]
 
