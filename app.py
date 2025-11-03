@@ -385,7 +385,7 @@ with tabs[1]:
                     cur.execute("DELETE FROM mixers WHERE id=?", (mixer_id_del,))
                     conn.commit()
                     st.success("Mixer eliminado.")
-                    st.rerun())
+                    st.rerun()
 # 3) Nuevo Proyecto (viaje simple)
 with tabs[2]:
     st.subheader("Nuevo Proyecto (viaje simple)")
