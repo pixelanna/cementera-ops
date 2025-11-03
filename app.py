@@ -455,63 +455,67 @@ with tabs[2]:
     with col3:
         requiere_bomba = st.selectbox("¿Requiere bomba?", ["NO", "YES"])
         dosificadora = st.selectbox("Dosificadora", ["DF-01", "DF-06"])
-        mixer_id = st.number_input("Mixer ID (1-14)", 1, 14, 1)
+        mixer_id = st.number_input("Mixer (ID interno 1-..)", 1, 9999, 1)
 
     if st.button("Guardar viaje"):
-        # Parámetros para cálculo
-        for key in ["tiempo_descarga_min", "margen_lavado_min", "tiempo_cambio_obra_min"]:
-            c.execute("SELECT valor FROM parametros WHERE nombre=?", (key,))
-            val = c.fetchone()
-            if val is None:
-                st.error(f"Parámetro faltante: {key}")
-                st.stop()
-
-        c.execute("SELECT valor FROM parametros WHERE nombre='tiempo_descarga_min'")
-        tiempo_descarga_min = c.fetchone()[0]
-        c.execute("SELECT valor FROM parametros WHERE nombre='margen_lavado_min'")
-        margen_lavado_min = c.fetchone()[0]
-        c.execute("SELECT valor FROM parametros WHERE nombre='tiempo_cambio_obra_min'")
-        tiempo_cambio_obra_min = c.fetchone()[0]
-
-        # Verifica mixer
+        # --- Validaciones rápidas ---
+        # Mixer existe
         c.execute("SELECT capacidad_m3 FROM mixers WHERE id=?", (int(mixer_id),))
         row = c.fetchone()
         if not row:
-            st.error("Mixer no existe. Revisa el ID (1-14).")
+            st.error("Mixer no existe. Revisa el ID interno.")
             st.stop()
-        capacidad_mixer = row[0]
+        capacidad_mixer = float(row[0])
 
+        # Parámetros del sistema
+        for key in ["tiempo_descarga_min", "margen_lavado_min", "tiempo_cambio_obra_min"]:
+            c.execute("SELECT valor FROM parametros WHERE nombre=?", (key,))
+            v = c.fetchone()
+            if v is None:
+                st.error(f"Falta el parámetro '{key}'. Agrega ese parámetro en la pestaña Parámetros.")
+                st.stop()
+
+        c.execute("SELECT valor FROM parametros WHERE nombre='tiempo_descarga_min'")
+        tiempo_descarga_min = float(c.fetchone()[0])
+        c.execute("SELECT valor FROM parametros WHERE nombre='margen_lavado_min'")
+        margen_lavado_min = float(c.fetchone()[0])
+        c.execute("SELECT valor FROM parametros WHERE nombre='tiempo_cambio_obra_min'")
+        tiempo_cambio_obra_min = float(c.fetchone()[0])
+
+        # --- Cálculo de tiempos (todo dentro del botón) ---
         try:
             R, S, T, U, V, W, X = calcular_tiempos(
-                hora_Q, min_viaje_ida, volumen_m3,
-                tiempo_descarga_min, margen_lavado_min, tiempo_cambio_obra_min
+                hora_Q, int(min_viaje_ida), float(volumen_m3), capacidad_mixer,
+                int(tiempo_descarga_min), int(margen_lavado_min), int(tiempo_cambio_obra_min)
             )
         except ValueError:
-            st.error("Formato de hora inválido. Usa HH:MM (ej. 08:00).")
+            st.error("Formato de hora inválido. Usa HH:MM (ej. 06:20).")
             st.stop()
 
-        # Normaliza codigo de dosificadora
-dosif_codigo = dosificadora  # ya viene "DF-01"/"DF-06" desde tu selectbox
-fecha_str = fecha.strftime("%Y-%m-%d")
-fecha_hora_q = f"{fecha_str} {hora_Q}"  # para consultas más fáciles
+        # --- Campos extra para agenda ---
+        fecha_str = fecha.strftime("%Y-%m-%d")
+        fecha_hora_q = f"{fecha_str} {hora_Q}"
+        ciclo_total_min = int((X - S).total_seconds() // 60)   # duración del ciclo [S..X]
+        min_viaje_regreso = int(min_viaje_ida)                 # por ahora igual que ida
+        dosif_codigo = dosificadora                            # "DF-01" / "DF-06"
 
-ciclo_total_min = int((X - S).total_seconds() // 60)  # (X - S) en minutos
-min_viaje_regreso = int(min_viaje_ida)                # puedes diferenciar luego si quieres
-
-c.execute("""
-INSERT INTO agenda (
-    cliente, proyecto, fecha, hora_Q, min_viaje_ida, volumen_m3, requiere_bomba,
-    dosificadora, mixer_id, hora_R, hora_S, hora_T, hora_U, hora_V, hora_W, hora_X,
-    estado, fecha_hora_q, ciclo_total_min, min_viaje_regreso, dosif_codigo
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-""", (
-    cliente, proyecto, fecha_str, hora_Q, int(min_viaje_ida), float(volumen_m3), requiere_bomba,
-    dosificadora, int(mixer_id), R.strftime("%H:%M"), S.strftime("%H:%M"), T.strftime("%H:%M"),
-    U.strftime("%H:%M"), V.strftime("%H:%M"), W.strftime("%H:%M"), X.strftime("%H:%M"),
-    "Programado", fecha_hora_q, ciclo_total_min, min_viaje_regreso, dosif_codigo
-))
-conn.commit()
-st.success("✅ Viaje guardado correctamente")
+        # --- Guardar en agenda (con todas las horas clave) ---
+        c.execute("""
+            INSERT INTO agenda (
+                cliente, proyecto, fecha, hora_Q, min_viaje_ida, volumen_m3, requiere_bomba,
+                dosificadora, mixer_id, hora_R, hora_S, hora_T, hora_U, hora_V, hora_W, hora_X,
+                estado, fecha_hora_q, ciclo_total_min, min_viaje_regreso, dosif_codigo
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (
+            cliente, proyecto, fecha_str, hora_Q, int(min_viaje_ida), float(volumen_m3), requiere_bomba,
+            dosificadora, int(mixer_id),
+            R.strftime("%H:%M"), S.strftime("%H:%M"), T.strftime("%H:%M"),
+            U.strftime("%H:%M"), V.strftime("%H:%M"), W.strftime("%H:%M"), X.strftime("%H:%M"),
+            "Programado", fecha_hora_q, ciclo_total_min, min_viaje_regreso, dosif_codigo
+        ))
+        conn.commit()
+        st.success("✅ Viaje guardado correctamente")
 
 # 4) Calendario del día
 with tabs[3]:
