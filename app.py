@@ -68,6 +68,38 @@ CREATE TABLE IF NOT EXISTS agenda (
 )""")
 conn.commit()
 
+def get_param(conn, name: str, default=None):
+    """
+    Lee un parámetro por nombre (case-insensitive).
+    Si no existe y se pasa default, lo crea y devuelve default.
+    """
+    cur = conn.cursor()
+    cur.execute("SELECT valor FROM parametros WHERE lower(nombre)=lower(?)", (name,))
+    row = cur.fetchone()
+    if row is not None:
+        return row[0]
+    if default is not None:
+        cur.execute("INSERT INTO parametros (nombre, valor) VALUES (?, ?)", (name, default))
+        conn.commit()
+        return default
+    raise ValueError(f"Falta el parámetro '{name}'. Agrega este parámetro en la pestaña Parámetros.")
+
+def ensure_required_params(conn):
+    """Garantiza que existan los parámetros clave con defaults sensatos."""
+    defaults = {
+        "Tiempo_descarga_min": 20,
+        "Margen_lavado_min": 10,
+        "Tiempo_cambio_obra_min": 5,
+        # Si quieres guardar explícito el base de carga:
+        "Tiempo_carga_min": 11,           # base para 8.5 m³ (la carga real se escala)
+        "Capacidad_mixer_m3": 8.5,        # referencial
+        "Intervalo_min": 15
+    }
+    cur = conn.cursor()
+    for k, v in defaults.items():
+        cur.execute("INSERT OR IGNORE INTO parametros (nombre, valor) VALUES (?, ?)", (k, v))
+    conn.commit()
+
 from datetime import time
 
 def parse_hhmm(hhmm: str) -> time:
@@ -492,12 +524,9 @@ with tabs[2]:
                 st.error(f"Falta el parámetro '{key}'. Agrega ese parámetro en la pestaña Parámetros.")
                 st.stop()
 
-        c.execute("SELECT valor FROM parametros WHERE nombre='Tiempo_descarga_min'")
-        Tiempo_descarga_min = float(c.fetchone()[0])
-        c.execute("SELECT valor FROM parametros WHERE nombre='margen_lavado_min'")
-        margen_lavado_min = float(c.fetchone()[0])
-        c.execute("SELECT valor FROM parametros WHERE nombre='tiempo_cambio_obra_min'")
-        tiempo_cambio_obra_min = float(c.fetchone()[0])
+        tiempo_descarga_min   = float(get_param(conn, "Tiempo_descarga_min",   20))
+        margen_lavado_min     = float(get_param(conn, "Margen_lavado_min",     10))
+        tiempo_cambio_obra_min= float(get_param(conn, "Tiempo_cambio_obra_min",5))
 
         # --- Cálculo de tiempos (todo dentro del botón) ---
         try:
