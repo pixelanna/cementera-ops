@@ -263,31 +263,27 @@ seed_data()
 # ---------------------------------------------------
 # Función de cálculo de tiempos
 # ---------------------------------------------------
-def calcular_tiempos(hora_Q_str, min_viaje_ida, volumen_m3,
+def calcular_tiempos(hora_Q, min_viaje_ida, volumen_m3,
                      tiempo_descarga_min, margen_lavado_min, tiempo_cambio_obra_min):
-    # Toma Q (hora en obra) y calcula:
-    # R (sale planta), S/T (carga), U (fin descarga), V (cambio en obra), W (regreso), X (fin total)
+    from datetime import datetime, timedelta
+    import math
 
-    hora_Q = datetime.strptime(hora_Q_str, "%H:%M")
-
-    # Q → R (resta viaje ida)
-    R = hora_Q - timedelta(minutes=int(min_viaje_ida))
+    # Q → R
+    hora_Q_dt = datetime.strptime(hora_Q.strip(), "%H:%M")
+    R = hora_Q_dt - timedelta(minutes=int(min_viaje_ida))
 
     # Carga variable por volumen: 11 min cuando 8.5 m³; escalar y redondear hacia arriba
-    tiempo_carga_base = 11  # base para 8.5 m³
+    tiempo_carga_base = 11
     tiempo_carga_min = math.ceil(tiempo_carga_base * (float(volumen_m3) / 8.5))
 
-    # S = inicio carga; T = fin carga (= R)
+    # S/T (carga)
     S = R - timedelta(minutes=tiempo_carga_min)
     T = R
 
-    # U = fin descarga desde Q
-    U = hora_Q + timedelta(minutes=int(tiempo_descarga_min))
-    # V = cambio en obra
+    # U (fin descarga), V (cambio), W (regreso), X (lavado)
+    U = hora_Q_dt + timedelta(minutes=int(tiempo_descarga_min))
     V = U + timedelta(minutes=int(tiempo_cambio_obra_min))
-    # W = regreso (mismos min que ida)
     W = V + timedelta(minutes=int(min_viaje_ida))
-    # X = fin total (lavado/margen)
     X = W + timedelta(minutes=int(margen_lavado_min))
 
     return R, S, T, U, V, W, X
