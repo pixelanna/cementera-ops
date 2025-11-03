@@ -453,9 +453,26 @@ with tabs[2]:
         min_viaje_ida = st.number_input("Minutos viaje ida", 0, 240, 30)
         volumen_m3 = st.number_input("Volumen (m³)", 1.0, 12.0, 8.5, step=0.5)
     with col3:
-        requiere_bomba = st.selectbox("¿Requiere bomba?", ["NO", "YES"])
-        dosificadora = st.selectbox("Dosificadora", ["DF-01", "DF-06"])
-        mixer_id = st.number_input("Mixer (ID interno 1-..)", 1, 9999, 1)
+    requiere_bomba = st.selectbox("¿Requiere bomba?", ["NO", "YES"])
+    dosificadora = st.selectbox("Dosificadora", ["DF-01", "DF-06"])
+
+    # --- Cargar Mixers habilitados desde BD ---
+    df_mix = pd.read_sql("SELECT id, unidad_id, placa, tipo, capacidad_m3, habilitado FROM mixers ORDER BY id", conn)
+    if df_mix.empty:
+        st.warning("No hay mixers registrados.")
+        mixer_id = None
+    else:
+        opciones_mixer = {
+            f"{(r['unidad_id'] or 's/n')} — {r['placa']} ({r['capacidad_m3']} m³, {r['tipo']})": int(r["id"])
+            for _, r in df_mix.iterrows()
+            if int(r["habilitado"]) == 1
+        }
+        if not opciones_mixer:
+            st.warning("No hay mixers habilitados.")
+            mixer_id = None
+        else:
+            etiqueta_sel = st.selectbox("Mixer", list(opciones_mixer.keys()))
+            mixer_id = opciones_mixer[etiqueta_sel]
 
     if st.button("Guardar viaje"):
         # --- Validaciones rápidas ---
