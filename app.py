@@ -485,15 +485,15 @@ with tabs[2]:
         capacidad_mixer = float(row[0])
 
         # Parámetros del sistema
-        for key in ["tiempo_descarga_min", "margen_lavado_min", "tiempo_cambio_obra_min"]:
+        for key in ["Tiempo_descarga_min", "Margen_lavado_min", "Tiempo_cambio_obra_min"]:
             c.execute("SELECT valor FROM parametros WHERE nombre=?", (key,))
             v = c.fetchone()
             if v is None:
                 st.error(f"Falta el parámetro '{key}'. Agrega ese parámetro en la pestaña Parámetros.")
                 st.stop()
 
-        c.execute("SELECT valor FROM parametros WHERE nombre='tiempo_descarga_min'")
-        tiempo_descarga_min = float(c.fetchone()[0])
+        c.execute("SELECT valor FROM parametros WHERE nombre='Tiempo_descarga_min'")
+        Tiempo_descarga_min = float(c.fetchone()[0])
         c.execute("SELECT valor FROM parametros WHERE nombre='margen_lavado_min'")
         margen_lavado_min = float(c.fetchone()[0])
         c.execute("SELECT valor FROM parametros WHERE nombre='tiempo_cambio_obra_min'")
