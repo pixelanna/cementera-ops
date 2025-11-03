@@ -257,23 +257,26 @@ with tabs[0]:
 with tabs[1]:
     st.subheader("Listado de Mixers")
 
-    # --- Patch de esquema: agregar columna Unidad y un índice único para evitar duplicados por Unidad
+    # --- Patch de esquema: agregar Unidad y único por Unidad (si no existían)
     cur = conn.cursor()
     cur.execute("PRAGMA table_info(mixers)")
     cols = [r[1].lower() for r in cur.fetchall()]
     if "unidad_id" not in cols:
         cur.execute("ALTER TABLE mixers ADD COLUMN unidad_id TEXT")
         conn.commit()
-    # índice único sobre unidad_id (si hay nulls, no chocan en SQLite)
     cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_mixers_unidad ON mixers(unidad_id)")
     conn.commit()
 
     # --- Carga rápida desde Excel (pegar)
     with st.expander("📥 Carga rápida desde Excel (pegar aquí)"):
-        st.caption("Formato por línea: **ID | Placa | Capacidad_m3 | Tipo** (ignora la columna Activo). Ejemplo: `218 25 | HAA1234 | 10 | SANY`")
-        pegado = st.text_area("Pega tus filas (una por línea):", height=200, placeholder="218 25 | HAA1234 | 10 | SANY\nMX 25 | HAA3456 | 8.5 | STD\n...")
-        coli, colj = st.columns([1,3])
-        with coli:
+        st.caption("Formato: **ID | Placa | Capacidad_m3 | Tipo** (ej: `218 25 | HAA1234 | 10 | SANY`). Se ignora 'Activo'.")
+        pegado = st.text_area(
+            "Pega tus filas (una por línea):",
+            height=200,
+            placeholder="218 25 | HAA1234 | 10 | SANY\nMX 25 | HAA3456 | 8.5 | STD\n..."
+        )
+        col_hab, _ = st.columns([1,3])
+        with col_hab:
             habilitar_todo = st.checkbox("Habilitar todos al cargar", value=True)
         if st.button("Cargar/Actualizar mixers"):
             if not pegado.strip():
@@ -283,8 +286,7 @@ with tabs[1]:
                 for line in pegado.splitlines():
                     if not line.strip():
                         continue
-                    # admite separadores | ; , o tab
-                    parts = [p.strip() for p in line.replace("\t", "|").replace(";", "|").replace(",", "|").split("|")]
+                    parts = [p.strip() for p in line.replace("\t","|").replace(";", "|").replace(",", "|").split("|")]
                     if len(parts) < 4:
                         err += 1
                         continue
@@ -311,7 +313,7 @@ with tabs[1]:
     m1.metric("Mixers habilitados", total_disponibles)
     m2.metric("Volumen habilitado (m³)", f"{volumen_disponible:.1f}")
 
-    # --- Vista amigable sin índice y sin columna 'activo'
+    # --- Vista amigable sin índice
     view = dfm.copy()
     view.rename(columns={
         "id": "MixerID",
@@ -342,6 +344,7 @@ with tabs[1]:
         sel = st.selectbox("Selecciona un mixer", list(opciones.keys()))
         mixer_id = opciones[sel]
 
+        # Leer estado actual y alternar
         cur.execute("SELECT habilitado FROM mixers WHERE id=?", (mixer_id,))
         row = cur.fetchone()
         if row is None:
@@ -356,22 +359,33 @@ with tabs[1]:
                 st.success(f"Mixer {mixer_id} {'habilitado' if nuevo==1 else 'deshabilitado'}.")
                 st.rerun()
 
-    st.markdown("### ✏️ Editar Unidad y Placa (manual)")
-    editable = st.data_editor(
-        dfm[["id", "unidad_id", "placa"]],
-        hide_index=True,
-        use_container_width=True
-    )
-    if st.button("💾 Guardar cambios de Unidad/Placa"):
-        for _, row in editable.iterrows():
-            cur.execute(
-                "UPDATE mixers SET unidad_id=?, placa=? WHERE id=?",
-                (row["unidad_id"], row["placa"], int(row["id"]))
-            )
-        conn.commit()
-        st.success("Cambios guardados.")
-        st.rerun()
+    st.markdown("### 🗑️ Eliminar mixer")
+    if not dfm.empty:
+        # Selecciona mixer a eliminar
+        opciones_del = {
+            f"ID {int(r.MixerID)} — {r.Unidad or 's/n'} — {r.Placa} ({r.Capacidad_m3} m³, {r.Tipo})"
+            : int(r.MixerID)
+            for _, r in view.iterrows()
+        }
+        sel_del = st.selectbox("Mixer a eliminar", list(opciones_del.keys()), key="del_sel")
+        mixer_id_del = opciones_del[sel_del]
 
+        # Verifica si tiene viajes en agenda
+        cur.execute("SELECT COUNT(*) FROM agenda WHERE mixer_id = ?", (mixer_id_del,))
+        cnt = cur.fetchone()[0]
+
+        if cnt > 0:
+            st.warning(f"No se puede eliminar: este mixer tiene {cnt} viaje(s) en agenda.")
+        else:
+            col_chk, col_btn = st.columns([2,1])
+            with col_chk:
+                conf = st.checkbox("Confirmo que deseo eliminar este mixer de forma permanente.")
+            with col_btn:
+                if st.button("Eliminar definitivamente", type="primary", disabled=not conf):
+                    cur.execute("DELETE FROM mixers WHERE id=?", (mixer_id_del,))
+                    conn.commit()
+                    st.success("Mixer eliminado.")
+                    st.rerun())
 # 3) Nuevo Proyecto (viaje simple)
 with tabs[2]:
     st.subheader("Nuevo Proyecto (viaje simple)")
