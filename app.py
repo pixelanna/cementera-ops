@@ -168,8 +168,68 @@ tabs = st.tabs(["⚙️ Parámetros", "🚛 Mixers", "🏗️ Nuevo Proyecto", "
 # 1) Parámetros
 with tabs[0]:
     st.subheader("Parámetros del sistema")
+
+    # 1) Ver / Editar en bloque
     dfp = pd.read_sql("SELECT nombre, valor FROM parametros ORDER BY nombre", conn)
-    st.dataframe(dfp, use_container_width=True)
+    edited = st.data_editor(
+        dfp.copy(),
+        key="param_editor",
+        use_container_width=True,
+        num_rows="fixed"  # evita agregar filas accidentalmente aquí
+    )
+    if st.button("💾 Guardar cambios de la tabla"):
+        # Escribimos todo lo editado
+        for _, row in edited.iterrows():
+            nombre = str(row["nombre"]).strip()
+            valor_raw = str(row["valor"]).strip()
+            # intenta castear a float si se puede
+            try:
+                valor = float(valor_raw)
+            except:
+                valor = valor_raw  # deja texto (fechas, etc.)
+            upsert_param(conn, nombre, valor)
+        st.success("Cambios guardados.")
+
+    st.markdown("---")
+
+    # 2) Agregar parámetro (+)
+    st.markdown("### ➕ Agregar parámetro")
+    colA, colB, colC = st.columns([2, 2, 1])
+    with colA:
+        nuevo_nombre = st.text_input("Nombre (único)", placeholder="p.ej. Tiempo_cambio_obra_min")
+    with colB:
+        nuevo_valor = st.text_input("Valor", placeholder="p.ej. 4 ó 2025-11-03")
+    with colC:
+        if st.button("Agregar"):
+            if not nuevo_nombre:
+                st.error("Escribe un nombre.")
+            elif dfp["nombre"].str.lower().eq(nuevo_nombre.lower()).any():
+                st.warning("Ese nombre ya existe. Usa la tabla para editarlo o borra primero.")
+            else:
+                # castear a float si aplica
+                try:
+                    v = float(nuevo_valor)
+                except:
+                    v = nuevo_valor
+                upsert_param(conn, nuevo_nombre.strip(), v)
+                st.success(f"Parámetro '{nuevo_nombre}' agregado. Recarga para verlo en la tabla.")
+
+    st.markdown("---")
+
+    # 3) Eliminar parámetro (🗑️)
+    st.markdown("### 🗑️ Eliminar parámetro")
+    if len(dfp) == 0:
+        st.info("No hay parámetros para eliminar.")
+    else:
+        colD, colE = st.columns([3,1])
+        with colD:
+            to_delete = st.selectbox("Selecciona el parámetro a eliminar", dfp["nombre"].tolist())
+        with colE:
+            if st.button("Eliminar", type="secondary"):
+                cur = conn.cursor()
+                cur.execute("DELETE FROM parametros WHERE nombre = ?", (to_delete,))
+                conn.commit()
+                st.success(f"Parámetro '{to_delete}' eliminado. Recarga para actualizar la tabla.")
 
 # 2) Mixers
 with tabs[1]:
