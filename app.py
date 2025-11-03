@@ -742,23 +742,65 @@ else:
 
     # Form para edición rápida
     c1, c2, c3 = st.columns(3)
-    with c1:
-        hora_Q_new = st.text_input("Hora en obra (HH:MM)", value=row["hora_Q"])
-        min_ida_new = st.number_input("Min viaje ida", 0, 240, int(row["min_viaje_ida"]))
-        vol_new = st.number_input("Volumen (m³)", 1.0, 12.0, float(row["volumen_m3"]), step=0.5)
-    with c2:
-        req_bomba_new = st.selectbox("¿Requiere bomba?", ["NO", "YES"], index=0 if row["requiere_bomba"]=="NO" else 1)
-        dosif_new = st.selectbox("Dosificadora", ["DF-01", "DF-06"], index=0 if (row["dosif_codigo"] or "DF-01")=="DF-01" else 1)
-        # Mixers habilitados en selector
-        df_mix_hab = pd.read_sql("SELECT id, unidad_id, placa, habilitado, capacidad_m3, tipo FROM mixers ORDER BY id", conn)
-        mix_opts = {f"{(r['unidad_id'] or 's/n')} — {r['placa']} ({r['capacidad_m3']} m³, {r['tipo']})": int(r["id"])
-                    for _, r in df_mix_hab.iterrows() if int(r["habilitado"])==1}
-        mixer_lbl_default = id2mixer.get(int(row["mixer_id"]), "s/n")
-        idx_default = 0 if not mix_opts else list(mix_opts.values()).index(int(row["mixer_id"])) if int(row["mixer_id"]) in mix_opts.values() else 0
-        mixer_lbl = st.selectbox("Mixer", list(mix_opts.keys()), index=idx_default)
-        mixer_new = mix_opts[mixer_lbl]
+
+with c1:
+    hora_Q_new = st.text_input(
+        "Hora en obra (HH:MM)",
+        value=row["hora_Q"],
+        key=f"edit_hora_{agenda_id}"
+    )
+    min_ida_new = st.number_input(
+        "Min viaje ida",
+        min_value=0, max_value=240, value=int(row["min_viaje_ida"]),
+        key=f"edit_minida_{agenda_id}"
+    )
+    vol_new = st.number_input(
+        "Volumen (m³)",
+        min_value=1.0, max_value=12.0, value=float(row["volumen_m3"]), step=0.5,
+        key=f"edit_vol_{agenda_id}"
+    )
+
+with c2:
+    req_bomba_new = st.selectbox(
+        "¿Requiere bomba?",
+        ["NO", "YES"],
+        index=0 if (row["requiere_bomba"] or "NO") == "NO" else 1,
+        key=f"edit_bomba_{agenda_id}"
+    )
+    dosif_new = st.selectbox(
+        "Dosificadora",
+        ["DF-01", "DF-06"],
+        index=0 if (row["dosif_codigo"] or "DF-01") == "DF-01" else 1,
+        key=f"edit_dosif_{agenda_id}"
+    )
+    # Mixers habilitados
+    df_mix_hab = pd.read_sql(
+        "SELECT id, unidad_id, placa, habilitado, capacidad_m3, tipo FROM mixers ORDER BY id", conn
+    )
+    mix_opts = {
+        f"{(r['unidad_id'] or 's/n')} — {r['placa']} ({r['capacidad_m3']} m³, {r['tipo']})": int(r["id"])
+        for _, r in df_mix_hab.iterrows() if int(r["habilitado"]) == 1
+    }
+    mix_labels = list(mix_opts.keys())
+    mix_values = list(mix_opts.values())
+    try:
+        idx_default = mix_values.index(int(row["mixer_id"]))
+    except ValueError:
+        idx_default = 0 if mix_values else 0
+    mixer_lbl = st.selectbox(
+        "Mixer",
+        mix_labels if mix_labels else ["(sin mixers habilitados)"],
+        index=idx_default if mix_labels else 0,
+        key=f"edit_mixer_{agenda_id}"
+    )
+    mixer_new = mix_opts[mixer_lbl] if mix_labels else int(row["mixer_id"])
+
     with c3:
-        fecha_new = st.date_input("Fecha del viaje", datetime.strptime(row["fecha"], "%Y-%m-%d"), key=f"edit_fecha_{agenda_id}")
+        fecha_new = st.date_input(
+            "Fecha del viaje",
+            datetime.strptime(row["fecha"], "%Y-%m-%d"),
+            key=f"edit_fecha_{agenda_id}"
+        )
 
     b1, b2 = st.columns([1,1])
     with b1:
