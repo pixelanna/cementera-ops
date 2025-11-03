@@ -169,16 +169,18 @@ tabs = st.tabs(["⚙️ Parámetros", "🚛 Mixers", "🏗️ Nuevo Proyecto", "
 with tabs[0]:
     st.subheader("Parámetros del sistema")
 
-    # 1) Ver / Editar en bloque
+    # --- Mostrar tabla con índice desde 1 ---
     dfp = pd.read_sql("SELECT nombre, valor FROM parametros ORDER BY nombre", conn)
-    edited = dfp_display = dfp.copy()
-dfp_display.index = range(1, len(dfp_display) + 1)  # <-- índice desde 1
-edited = st.data_editor(
-    dfp_display,
-    key="param_editor",
-    use_container_width=True,
-    num_rows="fixed"
-)
+    dfp_display = dfp.copy()
+    dfp_display.index = range(1, len(dfp_display) + 1)
+
+    edited = st.data_editor(
+        dfp_display,
+        key="param_editor",
+        use_container_width=True,
+        num_rows="fixed"  # evita agregar filas accidentalmente aquí
+    )
+
     if st.button("💾 Guardar cambios de la tabla"):
         # Escribimos todo lo editado
         for _, row in edited.iterrows():
@@ -194,7 +196,7 @@ edited = st.data_editor(
 
     st.markdown("---")
 
-    # 2) Agregar parámetro (+)
+    # --- Agregar parámetro (+) ---
     st.markdown("### ➕ Agregar parámetro")
     colA, colB, colC = st.columns([2, 2, 1])
     with colA:
@@ -208,7 +210,6 @@ edited = st.data_editor(
             elif dfp["nombre"].str.lower().eq(nuevo_nombre.lower()).any():
                 st.warning("Ese nombre ya existe. Usa la tabla para editarlo o borra primero.")
             else:
-                # castear a float si aplica
                 try:
                     v = float(nuevo_valor)
                 except:
@@ -218,12 +219,12 @@ edited = st.data_editor(
 
     st.markdown("---")
 
-    # 3) Eliminar parámetro (🗑️)
+    # --- Eliminar parámetro (🗑️) ---
     st.markdown("### 🗑️ Eliminar parámetro")
     if len(dfp) == 0:
         st.info("No hay parámetros para eliminar.")
     else:
-        colD, colE = st.columns([3,1])
+        colD, colE = st.columns([3, 1])
         with colD:
             to_delete = st.selectbox("Selecciona el parámetro a eliminar", dfp["nombre"].tolist())
         with colE:
