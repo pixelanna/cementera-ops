@@ -171,12 +171,14 @@ with tabs[0]:
 
     # 1) Ver / Editar en bloque
     dfp = pd.read_sql("SELECT nombre, valor FROM parametros ORDER BY nombre", conn)
-    edited = st.data_editor(
-        dfp.copy(),
-        key="param_editor",
-        use_container_width=True,
-        num_rows="fixed"  # evita agregar filas accidentalmente aquí
-    )
+    edited = dfp_display = dfp.copy()
+dfp_display.index = range(1, len(dfp_display) + 1)  # <-- índice desde 1
+edited = st.data_editor(
+    dfp_display,
+    key="param_editor",
+    use_container_width=True,
+    num_rows="fixed"
+)
     if st.button("💾 Guardar cambios de la tabla"):
         # Escribimos todo lo editado
         for _, row in edited.iterrows():
