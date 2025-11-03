@@ -447,7 +447,7 @@ with tabs[2]:
     with col1:
         cliente = st.text_input("Cliente")
         proyecto = st.text_input("Proyecto")
-        fecha = st.date_input("Fecha", datetime.now())
+        fecha = st.date_input("Fecha", datetime.now(), key="np_fecha")
     with col2:
         hora_Q = st.text_input("Hora en obra (HH:MM)", "08:00")
         min_viaje_ida = st.number_input("Minutos viaje ida", 0, 240, 30)
@@ -522,7 +522,7 @@ with tabs[3]:
     st.subheader("Calendario del día (viajes y recursos)")
 
     # Selecciona fecha a visualizar
-    fecha_sel = st.date_input("Fecha", datetime.now()).strftime("%Y-%m-%d")
+    fecha_sel = st.date_input("Fecha", datetime.now(), key="cal_fecha").strftime("%Y-%m-%d")
 
     # --- Resumen por proyecto (Proyecto | Hora Q | Mixers)
     df_day = pd.read_sql("""
