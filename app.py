@@ -792,49 +792,49 @@ else:
 # 5) Calendario del mes
 
     with tabs[4]:
-    st.subheader("Calendario del mes — agrupado por proyectos")
-
-    # Selecciona una fecha de referencia (usamos su mes)
-    ref = st.date_input("Mes de referencia", datetime.now(), key="cal_mes_ref")
-    y, m = ref.year, ref.month
-    first = datetime(y, m, 1)
-    if m == 12:
-        last = datetime(y + 1, 1, 1) - timedelta(days=1)
-    else:
-        last = datetime(y, m + 1, 1) - timedelta(days=1)
-
-    date_from = first.strftime("%Y-%m-%d")
-    date_to = last.strftime("%Y-%m-%d")
-
-    dfm = pd.read_sql("""
-        SELECT a.proyecto, a.fecha, a.volumen_m3, a.mixer_id,
-               a.hora_S, a.hora_X
-        FROM agenda a
-        WHERE a.fecha BETWEEN ? AND ?
-        ORDER BY a.fecha, a.hora_S
-    """, conn, params=(date_from, date_to))
-
-    if dfm.empty:
-        st.info("No hay viajes registrados para este mes.")
-    else:
-        dmx = pd.read_sql("SELECT id, unidad_id, placa FROM mixers", conn)
-        id2lbl = {int(r["id"]): f"{r['unidad_id'] or 's/n'} ({r['placa']})" for _, r in dmx.iterrows()}
-        dfm["Mixer"] = dfm["mixer_id"].map(id2lbl)
-        dfm["Mixer_SX"] = dfm.apply(lambda r: f"{r['Mixer']} [S:{r['hora_S']}→X:{r['hora_X']}]", axis=1)
-
-        agg = (dfm.groupby(["fecha", "proyecto"], as_index=False)
-                  .agg(
-                      m3_total=("volumen_m3", "sum"),
-                      mixers=("Mixer_SX", lambda s: ", ".join(s))
-                  )
-               )
-
-        agg.rename(columns={
-            "fecha": "Fecha",
-            "proyecto": "Proyecto",
-            "m3_total": "Total m³",
-            "mixers": "Mixers (S→X)"
-        }, inplace=True)
-
-        st.dataframe(agg, use_container_width=True, hide_index=True)
-        st.caption("Cada fila = un proyecto en un día. Muestra total de m³ y mixers con sus ventanas S→X.")
+        st.subheader("Calendario del mes — agrupado por proyectos")
+    
+        # Selecciona una fecha de referencia (usamos su mes)
+        ref = st.date_input("Mes de referencia", datetime.now(), key="cal_mes_ref")
+        y, m = ref.year, ref.month
+        first = datetime(y, m, 1)
+        if m == 12:
+            last = datetime(y + 1, 1, 1) - timedelta(days=1)
+        else:
+            last = datetime(y, m + 1, 1) - timedelta(days=1)
+    
+        date_from = first.strftime("%Y-%m-%d")
+        date_to = last.strftime("%Y-%m-%d")
+    
+        dfm = pd.read_sql("""
+            SELECT a.proyecto, a.fecha, a.volumen_m3, a.mixer_id,
+                   a.hora_S, a.hora_X
+            FROM agenda a
+            WHERE a.fecha BETWEEN ? AND ?
+            ORDER BY a.fecha, a.hora_S
+        """, conn, params=(date_from, date_to))
+    
+        if dfm.empty:
+            st.info("No hay viajes registrados para este mes.")
+        else:
+            dmx = pd.read_sql("SELECT id, unidad_id, placa FROM mixers", conn)
+            id2lbl = {int(r["id"]): f"{r['unidad_id'] or 's/n'} ({r['placa']})" for _, r in dmx.iterrows()}
+            dfm["Mixer"] = dfm["mixer_id"].map(id2lbl)
+            dfm["Mixer_SX"] = dfm.apply(lambda r: f"{r['Mixer']} [S:{r['hora_S']}→X:{r['hora_X']}]", axis=1)
+    
+            agg = (dfm.groupby(["fecha", "proyecto"], as_index=False)
+                      .agg(
+                          m3_total=("volumen_m3", "sum"),
+                          mixers=("Mixer_SX", lambda s: ", ".join(s))
+                      )
+                   )
+    
+            agg.rename(columns={
+                "fecha": "Fecha",
+                "proyecto": "Proyecto",
+                "m3_total": "Total m³",
+                "mixers": "Mixers (S→X)"
+            }, inplace=True)
+    
+            st.dataframe(agg, use_container_width=True, hide_index=True)
+            st.caption("Cada fila = un proyecto en un día. Muestra total de m³ y mixers con sus ventanas S→X.")
