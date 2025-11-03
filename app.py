@@ -77,6 +77,25 @@ def upsert_param(conn, nombre, valor):
     """, (nombre, valor))
     conn.commit()
 
+def upsert_mixer_by_unidad(conn, unidad_id, placa, capacidad_m3, tipo, habilitado=1):
+    cur = conn.cursor()
+    # normalizar tipo (SANY → SANNY)
+    tipo_norm = "SANNY" if str(tipo).strip().upper() in ["SANY", "SANNY"] else "STD"
+    # ¿existe ese unidad_id?
+    cur.execute("SELECT id FROM mixers WHERE unidad_id = ?", (unidad_id,))
+    row = cur.fetchone()
+    if row:
+        cur.execute(
+            "UPDATE mixers SET placa=?, capacidad_m3=?, tipo=?, habilitado=? WHERE id=?",
+            (placa, float(capacidad_m3), tipo_norm, int(habilitado), row[0])
+        )
+    else:
+        cur.execute(
+            "INSERT INTO mixers (placa, activo, habilitado, capacidad_m3, tipo, unidad_id) VALUES (?, ?, ?, ?, ?, ?)",
+            (placa, 1, int(habilitado), float(capacidad_m3), tipo_norm, unidad_id)
+        )
+    conn.commit()
+
 # ---------------------------------------------------
 # Seed de datos si faltan
 # ---------------------------------------------------
@@ -238,18 +257,49 @@ with tabs[0]:
 with tabs[1]:
     st.subheader("Listado de Mixers")
 
-    # --- Patch de esquema: agrega unidad_id si no existe (para almacenar '218 25', 'MX 25', etc.)
+    # --- Patch de esquema: agregar columna Unidad y un índice único para evitar duplicados por Unidad
     cur = conn.cursor()
     cur.execute("PRAGMA table_info(mixers)")
     cols = [r[1].lower() for r in cur.fetchall()]
     if "unidad_id" not in cols:
-        cur.execute("ALTER TABLE mixers ADD COLUMN unidad_id TEXT")  # nullable
+        cur.execute("ALTER TABLE mixers ADD COLUMN unidad_id TEXT")
         conn.commit()
+    # índice único sobre unidad_id (si hay nulls, no chocan en SQLite)
+    cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_mixers_unidad ON mixers(unidad_id)")
+    conn.commit()
 
-    # --- Cargar datos
-    dfm = pd.read_sql("SELECT id, unidad_id, placa, activo, habilitado, capacidad_m3, tipo FROM mixers ORDER BY id", conn)
+    # --- Carga rápida desde Excel (pegar)
+    with st.expander("📥 Carga rápida desde Excel (pegar aquí)"):
+        st.caption("Formato por línea: **ID | Placa | Capacidad_m3 | Tipo** (ignora la columna Activo). Ejemplo: `218 25 | HAA1234 | 10 | SANY`")
+        pegado = st.text_area("Pega tus filas (una por línea):", height=200, placeholder="218 25 | HAA1234 | 10 | SANY\nMX 25 | HAA3456 | 8.5 | STD\n...")
+        coli, colj = st.columns([1,3])
+        with coli:
+            habilitar_todo = st.checkbox("Habilitar todos al cargar", value=True)
+        if st.button("Cargar/Actualizar mixers"):
+            if not pegado.strip():
+                st.warning("No hay texto para procesar.")
+            else:
+                ok, err = 0, 0
+                for line in pegado.splitlines():
+                    if not line.strip():
+                        continue
+                    # admite separadores | ; , o tab
+                    parts = [p.strip() for p in line.replace("\t", "|").replace(";", "|").replace(",", "|").split("|")]
+                    if len(parts) < 4:
+                        err += 1
+                        continue
+                    unidad_id, placa, cap_str, tipo = parts[0], parts[1], parts[2], parts[3]
+                    try:
+                        upsert_mixer_by_unidad(conn, unidad_id, placa, float(cap_str), tipo, 1 if habilitar_todo else 0)
+                        ok += 1
+                    except Exception:
+                        err += 1
+                st.success(f"Carga completada: {ok} OK, {err} con error.")
+                st.rerun()
 
-    # Métricas (disponibles = habilitado=1)
+    # --- Leer datos y métricas (solo HABILITADO)
+    dfm = pd.read_sql("SELECT id, unidad_id, placa, habilitado, capacidad_m3, tipo FROM mixers ORDER BY id", conn)
+
     if dfm.empty:
         total_disponibles = 0
         volumen_disponible = 0.0
@@ -258,10 +308,10 @@ with tabs[1]:
         volumen_disponible = float(dfm.loc[dfm["habilitado"] == 1, "capacidad_m3"].sum())
 
     m1, m2, _ = st.columns([1, 1, 2])
-    m1.metric("Mixers disponibles (habilitados)", total_disponibles)
-    m2.metric("Volumen disponible (m³)", f"{volumen_disponible:.1f}")
+    m1.metric("Mixers habilitados", total_disponibles)
+    m2.metric("Volumen habilitado (m³)", f"{volumen_disponible:.1f}")
 
-    # --- Vista amigable: columnas renombradas y estados YES/NO
+    # --- Vista amigable sin índice y sin columna 'activo'
     view = dfm.copy()
     view.rename(columns={
         "id": "MixerID",
@@ -269,25 +319,22 @@ with tabs[1]:
         "placa": "Placa",
         "capacidad_m3": "Capacidad_m3",
         "tipo": "Tipo",
+        "habilitado": "Habilitado_flag"
     }, inplace=True)
-    view["Activo (SI/NO)"] = view["activo"].apply(lambda x: "YES" if int(x) == 1 else "NO")
-    view["Habilitado (SI/NO)"] = view["habilitado"].apply(lambda x: "YES" if int(x) == 1 else "NO")
-    view = view[["MixerID", "Unidad", "Placa", "Activo (SI/NO)", "Habilitado (SI/NO)", "Capacidad_m3", "Tipo"]]
+    view["Habilitado (SI/NO)"] = view["Habilitado_flag"].apply(lambda x: "YES" if int(x) == 1 else "NO")
+    view = view[["MixerID", "Unidad", "Placa", "Habilitado (SI/NO)", "Capacidad_m3", "Tipo"]]
 
-    # --- Mostrar tabla sin índice (0..n-1)
     try:
         st.dataframe(view, use_container_width=True, hide_index=True)
     except TypeError:
         st.dataframe(view.style.hide(axis="index"), use_container_width=True)
 
-    st.markdown("### ⚙️ Habilitar / Deshabilitar")
-
+    st.markdown("### 🔁 Alternar habilitado")
     if dfm.empty:
         st.info("No hay mixers cargados.")
     else:
-        # Selector por Mixer
         opciones = {
-            f"ID {int(r.MixerID)} — {r.Placa} ({r.Capacidad_m3} m³, {r.Tipo}) — "
+            f"ID {int(r.MixerID)} — {r.Unidad or 's/n'} — {r.Placa} ({r.Capacidad_m3} m³, {r.Tipo}) — "
             f"{'HABILITADO' if dfm.loc[dfm['id']==int(r.MixerID),'habilitado'].iloc[0]==1 else 'DESHABILITADO'}"
             : int(r.MixerID)
             for _, r in view.iterrows()
@@ -295,7 +342,6 @@ with tabs[1]:
         sel = st.selectbox("Selecciona un mixer", list(opciones.keys()))
         mixer_id = opciones[sel]
 
-        # Leer estado actual y alternar
         cur.execute("SELECT habilitado FROM mixers WHERE id=?", (mixer_id,))
         row = cur.fetchone()
         if row is None:
@@ -309,6 +355,22 @@ with tabs[1]:
                 conn.commit()
                 st.success(f"Mixer {mixer_id} {'habilitado' if nuevo==1 else 'deshabilitado'}.")
                 st.rerun()
+
+    st.markdown("### ✏️ Editar Unidad y Placa (manual)")
+    editable = st.data_editor(
+        dfm[["id", "unidad_id", "placa"]],
+        hide_index=True,
+        use_container_width=True
+    )
+    if st.button("💾 Guardar cambios de Unidad/Placa"):
+        for _, row in editable.iterrows():
+            cur.execute(
+                "UPDATE mixers SET unidad_id=?, placa=? WHERE id=?",
+                (row["unidad_id"], row["placa"], int(row["id"]))
+            )
+        conn.commit()
+        st.success("Cambios guardados.")
+        st.rerun()
 
 # 3) Nuevo Proyecto (viaje simple)
 with tabs[2]:
