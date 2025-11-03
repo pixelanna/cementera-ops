@@ -95,13 +95,22 @@ def seed_data():
             [("DF-01", 1), ("DF-06", 1)]
         )
 
-    # Parámetros base (si faltan)
+    # Parámetros base (según tu Excel)
+    # Nota: SQLite permite guardar texto en una columna REAL sin romperse (tipado dinámico),
+    # así que dejamos la columna como está y guardamos la fecha como 'YYYY-MM-DD'.
     base_params = {
-        "intervalo_min": 15,
-        # tiempo_carga_min_base = 11 min cuando 8.5 m³ (regla en cálculo)
-        "tiempo_descarga_min": 20,
-        "margen_lavado_min": 10,
-        "tiempo_cambio_obra_min": 5,
+        "Fecha_inicio": "2025-11-03",          # tu 11/3/2025 interpretado como 3-Nov-2025
+        "Dias_planificados": 7,
+        "Intervalo_min": 15,
+        "Capacidad_mixer_m3": 8.5,
+        "Tiempo_carga_min": 11,                # base para 8.5 m³
+        "Tiempo_descarga_min": 20,
+        "Margen_lavado_min": 5,
+        "Bombas_disponibles": 3,
+        "Dosificadoras_en_planta": 2,
+        "Tiempo_cambio_obra_min": 4,
+        "Mixers_SANNY": 2,
+        "Capacidad_SANNY_m3": 10,
     }
     for k, v in base_params.items():
         c.execute("INSERT OR IGNORE INTO parametros (nombre, valor) VALUES (?, ?)", (k, v))
