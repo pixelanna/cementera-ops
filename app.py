@@ -68,6 +68,15 @@ CREATE TABLE IF NOT EXISTS agenda (
 )""")
 conn.commit()
 
+def upsert_param(conn, nombre, valor):
+    cur = conn.cursor()
+    cur.execute("""
+        INSERT INTO parametros (nombre, valor)
+        VALUES (?, ?)
+        ON CONFLICT(nombre) DO UPDATE SET valor=excluded.valor
+    """, (nombre, valor))
+    conn.commit()
+
 # ---------------------------------------------------
 # Seed de datos si faltan
 # ---------------------------------------------------
