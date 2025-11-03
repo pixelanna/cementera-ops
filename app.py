@@ -1,0 +1,236 @@
+import streamlit as st
+import sqlite3
+import pandas as pd
+from datetime import datetime, timedelta
+import math
+
+st.set_page_config(page_title="Cementera OPS", layout="wide")
+st.title("🚧 Cementera OPS - v0.1")
+
+# ---------------------------------------------------
+# Conexión a SQLite (cacheada para Streamlit Cloud)
+# ---------------------------------------------------
+@st.cache_resource
+def get_conn():
+    # check_same_thread=False para permitir uso en Streamlit
+    conn = sqlite3.connect("cementera.db", check_same_thread=False)
+    return conn
+
+conn = get_conn()
+c = conn.cursor()
+
+# ---------------------------------------------------
+# Crear tablas si no existen
+# ---------------------------------------------------
+c.execute("""
+CREATE TABLE IF NOT EXISTS parametros (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    nombre TEXT UNIQUE,
+    valor REAL
+)""")
+
+c.execute("""
+CREATE TABLE IF NOT EXISTS mixers (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    placa TEXT,
+    activo INTEGER,
+    habilitado INTEGER,
+    capacidad_m3 REAL,
+    tipo TEXT
+)""")
+
+c.execute("""
+CREATE TABLE IF NOT EXISTS dosif (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    codigo TEXT,
+    habilitado INTEGER
+)""")
+
+c.execute("""
+CREATE TABLE IF NOT EXISTS agenda (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    cliente TEXT,
+    proyecto TEXT,
+    fecha TEXT,
+    hora_Q TEXT,
+    min_viaje_ida INTEGER,
+    volumen_m3 REAL,
+    requiere_bomba TEXT,
+    dosificadora TEXT,
+    mixer_id INTEGER,
+    hora_R TEXT,
+    hora_S TEXT,
+    hora_T TEXT,
+    hora_U TEXT,
+    hora_V TEXT,
+    hora_W TEXT,
+    hora_X TEXT
+)""")
+conn.commit()
+
+# ---------------------------------------------------
+# Seed de datos si faltan
+# ---------------------------------------------------
+def seed_data():
+    # Mixers
+    c.execute("SELECT COUNT(*) FROM mixers")
+    if c.fetchone()[0] == 0:
+        mixers = []
+        # 2 SANNY 10 m3
+        for i in range(1, 3):
+            mixers.append((f"SANNY-{str(i).zfill(2)}", 1, 1, 10.0, "SANNY"))
+        # 12 STD 8.5 m3
+        for i in range(3, 15):
+            mixers.append((f"STD-{str(i).zfill(2)}", 1, 1, 8.5, "STD"))
+        c.executemany(
+            "INSERT INTO mixers (placa, activo, habilitado, capacidad_m3, tipo) VALUES (?, ?, ?, ?, ?)",
+            mixers
+        )
+
+    # Dosificadoras
+    c.execute("SELECT COUNT(*) FROM dosif")
+    if c.fetchone()[0] == 0:
+        c.executemany(
+            "INSERT INTO dosif (codigo, habilitado) VALUES (?, ?)",
+            [("DF-01", 1), ("DF-06", 1)]
+        )
+
+    # Parámetros base (si faltan)
+    base_params = {
+        "intervalo_min": 15,
+        # tiempo_carga_min_base = 11 min cuando 8.5 m³ (regla en cálculo)
+        "tiempo_descarga_min": 20,
+        "margen_lavado_min": 10,
+        "tiempo_cambio_obra_min": 5,
+    }
+    for k, v in base_params.items():
+        c.execute("INSERT OR IGNORE INTO parametros (nombre, valor) VALUES (?, ?)", (k, v))
+
+    conn.commit()
+
+seed_data()
+
+# ---------------------------------------------------
+# Función de cálculo de tiempos
+# ---------------------------------------------------
+def calcular_tiempos(hora_Q_str, min_viaje_ida, volumen_m3,
+                     tiempo_descarga_min, margen_lavado_min, tiempo_cambio_obra_min):
+    # Toma Q (hora en obra) y calcula:
+    # R (sale planta), S/T (carga), U (fin descarga), V (cambio en obra), W (regreso), X (fin total)
+
+    hora_Q = datetime.strptime(hora_Q_str, "%H:%M")
+
+    # Q → R (resta viaje ida)
+    R = hora_Q - timedelta(minutes=int(min_viaje_ida))
+
+    # Carga variable por volumen: 11 min cuando 8.5 m³; escalar y redondear hacia arriba
+    tiempo_carga_base = 11  # base para 8.5 m³
+    tiempo_carga_min = math.ceil(tiempo_carga_base * (float(volumen_m3) / 8.5))
+
+    # S = inicio carga; T = fin carga (= R)
+    S = R - timedelta(minutes=tiempo_carga_min)
+    T = R
+
+    # U = fin descarga desde Q
+    U = hora_Q + timedelta(minutes=int(tiempo_descarga_min))
+    # V = cambio en obra
+    V = U + timedelta(minutes=int(tiempo_cambio_obra_min))
+    # W = regreso (mismos min que ida)
+    W = V + timedelta(minutes=int(min_viaje_ida))
+    # X = fin total (lavado/margen)
+    X = W + timedelta(minutes=int(margen_lavado_min))
+
+    return R, S, T, U, V, W, X
+
+# ---------------------------------------------------
+# UI
+# ---------------------------------------------------
+tabs = st.tabs(["⚙️ Parámetros", "🚛 Mixers", "🏗️ Nuevo Proyecto", "📅 Calendario Día"])
+
+# 1) Parámetros
+with tabs[0]:
+    st.subheader("Parámetros del sistema")
+    dfp = pd.read_sql("SELECT nombre, valor FROM parametros ORDER BY nombre", conn)
+    st.dataframe(dfp, use_container_width=True)
+
+# 2) Mixers
+with tabs[1]:
+    st.subheader("Listado de Mixers")
+    dfm = pd.read_sql("SELECT * FROM mixers ORDER BY id", conn)
+    st.dataframe(dfm, use_container_width=True)
+
+# 3) Nuevo Proyecto (viaje simple)
+with tabs[2]:
+    st.subheader("Nuevo Proyecto (viaje simple)")
+
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        cliente = st.text_input("Cliente")
+        proyecto = st.text_input("Proyecto")
+        fecha = st.date_input("Fecha", datetime.now())
+    with col2:
+        hora_Q = st.text_input("Hora en obra (HH:MM)", "08:00")
+        min_viaje_ida = st.number_input("Minutos viaje ida", 0, 240, 30)
+        volumen_m3 = st.number_input("Volumen (m³)", 1.0, 12.0, 8.5, step=0.5)
+    with col3:
+        requiere_bomba = st.selectbox("¿Requiere bomba?", ["NO", "YES"])
+        dosificadora = st.selectbox("Dosificadora", ["DF-01", "DF-06"])
+        mixer_id = st.number_input("Mixer ID (1-14)", 1, 14, 1)
+
+    if st.button("Guardar viaje"):
+        # Parámetros para cálculo
+        for key in ["tiempo_descarga_min", "margen_lavado_min", "tiempo_cambio_obra_min"]:
+            c.execute("SELECT valor FROM parametros WHERE nombre=?", (key,))
+            val = c.fetchone()
+            if val is None:
+                st.error(f"Parámetro faltante: {key}")
+                st.stop()
+
+        c.execute("SELECT valor FROM parametros WHERE nombre='tiempo_descarga_min'")
+        tiempo_descarga_min = c.fetchone()[0]
+        c.execute("SELECT valor FROM parametros WHERE nombre='margen_lavado_min'")
+        margen_lavado_min = c.fetchone()[0]
+        c.execute("SELECT valor FROM parametros WHERE nombre='tiempo_cambio_obra_min'")
+        tiempo_cambio_obra_min = c.fetchone()[0]
+
+        # Verifica mixer
+        c.execute("SELECT capacidad_m3 FROM mixers WHERE id=?", (int(mixer_id),))
+        row = c.fetchone()
+        if not row:
+            st.error("Mixer no existe. Revisa el ID (1-14).")
+            st.stop()
+        capacidad_mixer = row[0]
+
+        try:
+            R, S, T, U, V, W, X = calcular_tiempos(
+                hora_Q, min_viaje_ida, volumen_m3,
+                tiempo_descarga_min, margen_lavado_min, tiempo_cambio_obra_min
+            )
+        except ValueError:
+            st.error("Formato de hora inválido. Usa HH:MM (ej. 08:00).")
+            st.stop()
+
+        c.execute("""
+            INSERT INTO agenda (
+                cliente, proyecto, fecha, hora_Q, min_viaje_ida, volumen_m3, requiere_bomba,
+                dosificadora, mixer_id, hora_R, hora_S, hora_T, hora_U, hora_V, hora_W, hora_X
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (
+            cliente, proyecto, fecha.strftime("%Y-%m-%d"), hora_Q, int(min_viaje_ida), float(volumen_m3),
+            requiere_bomba, dosificadora, int(mixer_id),
+            R.strftime("%H:%M"), S.strftime("%H:%M"), T.strftime("%H:%M"),
+            U.strftime("%H:%M"), V.strftime("%H:%M"), W.strftime("%H:%M"), X.strftime("%H:%M")
+        ))
+        conn.commit()
+        st.success("✅ Viaje guardado correctamente")
+
+# 4) Calendario del día
+with tabs[3]:
+    st.subheader("Agenda del día")
+    hoy = datetime.now().strftime("%Y-%m-%d")
+    df_agenda = pd.read_sql("SELECT * FROM agenda WHERE fecha = ?", conn, params=(hoy,))
+    if df_agenda.empty:
+        st.info("No hay viajes registrados para hoy.")
+    else:
+        st.dataframe(df_agenda, use_container_width=True)
