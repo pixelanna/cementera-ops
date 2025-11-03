@@ -250,110 +250,64 @@ with tabs[1]:
     dfm = pd.read_sql("SELECT id, unidad_id, placa, activo, habilitado, capacidad_m3, tipo FROM mixers ORDER BY id", conn)
 
     # Métricas (disponibles = habilitado=1)
-    total_disponibles = int((dfm["habilitado"] == 1).sum()) if not dfm.empty else 0
-    volumen_disponible = float(dfm.loc[dfm["habilitado"] == 1, "capacidad_m3"].sum()) if not dfm.empty else 0.0
+    if dfm.empty:
+        total_disponibles = 0
+        volumen_disponible = 0.0
+    else:
+        total_disponibles = int((dfm["habilitado"] == 1).sum())
+        volumen_disponible = float(dfm.loc[dfm["habilitado"] == 1, "capacidad_m3"].sum())
 
-    cA, cB, cC = st.columns([1, 1, 2])
-    cA.metric("Mixers disponibles (habilitados)", total_disponibles)
-    cB.metric("Volumen disponible (m³)", f"{volumen_disponible:.1f}")
-    with cC:
-        st.caption("Disponibles = habilitado=1 (pueden asignarse). 'Activo' se mantiene como bandera operativa aparte.")
+    m1, m2, _ = st.columns([1, 1, 2])
+    m1.metric("Mixers disponibles (habilitados)", total_disponibles)
+    m2.metric("Volumen disponible (m³)", f"{volumen_disponible:.1f}")
 
     # --- Vista amigable: columnas renombradas y estados YES/NO
     view = dfm.copy()
-
-    # Donde quieras mostrar tu ID libre (Excel): si no lo tienes aún, puedes editar después con un update sencillo
     view.rename(columns={
+        "id": "MixerID",
         "unidad_id": "Unidad",
         "placa": "Placa",
-        "activo": "Activo_flag",
-        "habilitado": "Habilitado_flag",
         "capacidad_m3": "Capacidad_m3",
         "tipo": "Tipo",
-        "id": "MixerID"
     }, inplace=True)
+    view["Activo (SI/NO)"] = view["activo"].apply(lambda x: "YES" if int(x) == 1 else "NO")
+    view["Habilitado (SI/NO)"] = view["habilitado"].apply(lambda x: "YES" if int(x) == 1 else "NO")
+    view = view[["MixerID", "Unidad", "Placa", "Activo (SI/NO)", "Habilitado (SI/NO)", "Capacidad_m3", "Tipo"]]
 
-    # Columnas visibles y orden
-    view["Activo (SI/NO)"] = view["Activo_flag"].apply(lambda x: "YES" if int(x) == 1 else "NO")
-    view["Habilitado (SI/NO)"] = view["Habilitado_flag"].apply(lambda x: "YES" if int(x) == 1 else "NO")
-
-    # Botón por fila para alternar habilitado
-    # Creamos una columna 'Toggle' con el texto del botón según estado actual
-    view["Toggle"] = view["Habilitado (SI/NO)"].apply(lambda s: "DESHABILITAR" if s == "YES" else "HABILITAR")
-
-    # Selección de columnas a mostrar
-    show_cols = ["MixerID", "Unidad", "Placa", "Activo (SI/NO)", "Habilitado (SI/NO)", "Capacidad_m3", "Tipo", "Toggle"]
-
-    # Data editor con botón por fila (ButtonColumn)
-    from streamlit import column_config
-    # Índice oculto (sin 0..n-1)
+    # --- Mostrar tabla sin índice (0..n-1)
     try:
-        edited = st.data_editor(
-            view[show_cols],
-            key="mixers_editor",
-            use_container_width=True,
-            hide_index=True,
-            column_config={
-                "Toggle": column_config.ButtonColumn(
-                    "Habilitar/Deshabilitar",
-                    help="Alterna el estado 'Habilitado' de este mixer",
-                    width="small"
-                )
-            }
-        )
+        st.dataframe(view, use_container_width=True, hide_index=True)
     except TypeError:
-        # Fallback si tu versión no soporta hide_index
-        edited = st.data_editor(
-            view[show_cols].style.hide(axis="index"),
-            key="mixers_editor",
-            use_container_width=True,
-            column_config={
-                "Toggle": column_config.ButtonColumn(
-                    "Habilitar/Deshabilitar",
-                    help="Alterna el estado 'Habilitado' de este mixer",
-                    width="small"
-                )
-            }
-        )
+        st.dataframe(view.style.hide(axis="index"), use_container_width=True)
 
-    # Si se presionó algún botón en esta ejecución, 'edited' tendrá True en esa celda
-    # Detectamos clic en ButtonColumn comparando con el dataframe original 'view'
-    try:
-        # Buscamos filas donde cambió 'Toggle' a True (convención de Streamlit para ButtonColumn)
-        # Nota: En las versiones recientes, ButtonColumn devuelve True en la celda presionada en el ciclo actual
-        # Intentamos localizar esa fila por índice
-        if isinstance(edited, pd.DataFrame):
-            # Cuando se hace click, la celda 'Toggle' en esa fila queda en True en este run
-            clicked_mask = edited["Toggle"] == True
-            if clicked_mask.any():
-                clicked_rows = edited[clicked_mask]
-                for _, row in clicked_rows.iterrows():
-                    mixer_id = int(row["MixerID"])
-                    # Leer estado actual real
-                    cur.execute("SELECT habilitado FROM mixers WHERE id=?", (mixer_id,))
-                    cur_state = cur.fetchone()
-                    if cur_state is not None:
-                        nuevo = 0 if int(cur_state[0]) == 1 else 1
-                        cur.execute("UPDATE mixers SET habilitado=? WHERE id=?", (nuevo, mixer_id))
-                        conn.commit()
-                st.success("Estado actualizado.")
-                st.rerun()
-    except Exception:
-        # En caso de variaciones de versión, hacemos un plan B con selector + botón
-        st.info("Si el botón por fila no responde en tu versión de Streamlit, usa el control rápido de abajo.")
-        # Control rápido alternativo
-        opciones = {f"ID {int(r.MixerID)} — {r.Placa} ({r.Capacidad_m3} m³)": int(r.MixerID) for _, r in view.iterrows()}
-        sel = st.selectbox("Mixer para alternar habilitado", list(opciones.keys()))
+    st.markdown("### ⚙️ Habilitar / Deshabilitar")
+
+    if dfm.empty:
+        st.info("No hay mixers cargados.")
+    else:
+        # Selector por Mixer
+        opciones = {
+            f"ID {int(r.MixerID)} — {r.Placa} ({r.Capacidad_m3} m³, {r.Tipo}) — "
+            f"{'HABILITADO' if dfm.loc[dfm['id']==int(r.MixerID),'habilitado'].iloc[0]==1 else 'DESHABILITADO'}"
+            : int(r.MixerID)
+            for _, r in view.iterrows()
+        }
+        sel = st.selectbox("Selecciona un mixer", list(opciones.keys()))
         mixer_id = opciones[sel]
+
+        # Leer estado actual y alternar
         cur.execute("SELECT habilitado FROM mixers WHERE id=?", (mixer_id,))
-        cur_state = cur.fetchone()
-        if cur_state is not None:
-            etiqueta = "DESHABILITAR" if int(cur_state[0]) == 1 else "HABILITAR"
+        row = cur.fetchone()
+        if row is None:
+            st.error("No se pudo leer el estado del mixer seleccionado.")
+        else:
+            estado = int(row[0])
+            etiqueta = "DESHABILITAR" if estado == 1 else "HABILITAR"
             if st.button(etiqueta):
-                nuevo = 0 if int(cur_state[0]) == 1 else 1
+                nuevo = 0 if estado == 1 else 1
                 cur.execute("UPDATE mixers SET habilitado=? WHERE id=?", (nuevo, mixer_id))
                 conn.commit()
-                st.success("Estado actualizado.")
+                st.success(f"Mixer {mixer_id} {'habilitado' if nuevo==1 else 'deshabilitado'}.")
                 st.rerun()
 
 # 3) Nuevo Proyecto (viaje simple)
