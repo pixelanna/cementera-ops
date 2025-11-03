@@ -68,6 +68,87 @@ CREATE TABLE IF NOT EXISTS agenda (
 )""")
 conn.commit()
 
+from datetime import time
+
+def parse_hhmm(hhmm: str) -> time:
+    return datetime.strptime(hhmm, "%H:%M").time()
+
+def combine_date_time_str(date_str: str, hhmm: str) -> datetime:
+    # date_str = "YYYY-MM-DD"
+    return datetime.strptime(f"{date_str} {hhmm}", "%Y-%m-%d %H:%M")
+
+def build_slots_15(date_str: str, start="00:00", end="23:59"):
+    """Devuelve lista de datetimes cada 15 min del día."""
+    start_dt = datetime.strptime(f"{date_str} {start}", "%Y-%m-%d %H:%M")
+    end_dt   = datetime.strptime(f"{date_str} {end}",   "%Y-%m-%d %H:%M")
+    out = []
+    cur = start_dt
+    while cur <= end_dt:
+        out.append(cur)
+        cur += timedelta(minutes=15)
+    return out
+
+def mark_busy(slots: list[datetime], busy_ranges: list[tuple[datetime, datetime]]):
+    """Recibe slots 15' y una lista de (ini, fin) ocupados. Retorna lista de '■'/'·' por slot."""
+    marks = []
+    for s in slots:
+        occupied = any(start <= s < end for (start, end) in busy_ranges)
+        marks.append("■" if occupied else "·")
+    return marks
+
+def mixer_busy_ranges_for_day(conn, mixer_id: int, date_str: str):
+    """
+    Construye rangos ocupados [S..X] de AGENDA para un mixer en ese día.
+    S=hora_S, X=hora_X (ambas en HH:MM).
+    """
+    df = pd.read_sql("""
+        SELECT fecha, hora_S, hora_X
+        FROM agenda
+        WHERE mixer_id = ? AND fecha = ?
+    """, conn, params=(mixer_id, date_str))
+    ranges = []
+    for _, r in df.iterrows():
+        s = combine_date_time_str(r["fecha"], r["hora_S"])
+        x = combine_date_time_str(r["fecha"], r["hora_X"])
+        ranges.append((s, x))
+    return ranges
+
+def dosif_busy_ranges_for_day(conn, dosif_codigo: str, date_str: str):
+    """
+    Rango ocupado de la dosificadora según ventanas de carga [S..T]
+    """
+    df = pd.read_sql("""
+        SELECT fecha, hora_S, hora_T
+        FROM agenda
+        WHERE dosif_codigo = ? AND fecha = ?
+    """, conn, params=(dosif_codigo, date_str))
+    ranges = []
+    for _, r in df.iterrows():
+        s = combine_date_time_str(r["fecha"], r["hora_S"])
+        t = combine_date_time_str(r["fecha"], r["hora_T"])
+        ranges.append((s, t))
+    return ranges
+
+# --- PATCH: columnas extra para agenda (si no existen) ---
+cur = conn.cursor()
+cur.execute("PRAGMA table_info(agenda)")
+agenda_cols = [r[1].lower() for r in cur.fetchall()]
+
+def ensure_col(table, coldef):
+    # coldef ejemplo: "estado TEXT"
+    colname = coldef.split()[0]
+    if colname.lower() not in agenda_cols:
+        cur.execute(f"ALTER TABLE {table} ADD COLUMN {coldef}")
+        conn.commit()
+
+# Estado y trazas útiles (texto/num) — evita romper lo existente
+ensure_col("agenda", "estado TEXT")
+ensure_col("agenda", "fecha_hora_q TEXT")            # Fecha y hora Q combinadas
+ensure_col("agenda", "ciclo_total_min INTEGER")      # (X - S) en minutos
+ensure_col("agenda", "min_viaje_regreso INTEGER")    # igual a ida salvo que quieras cambiar
+# Si quieres guardar código normalizado de dosif:
+ensure_col("agenda", "dosif_codigo TEXT")            # ej. DF-01, DF-06
+
 def upsert_param(conn, nombre, valor):
     cur = conn.cursor()
     cur.execute("""
@@ -409,27 +490,127 @@ with tabs[2]:
             st.error("Formato de hora inválido. Usa HH:MM (ej. 08:00).")
             st.stop()
 
-        c.execute("""
-            INSERT INTO agenda (
-                cliente, proyecto, fecha, hora_Q, min_viaje_ida, volumen_m3, requiere_bomba,
-                dosificadora, mixer_id, hora_R, hora_S, hora_T, hora_U, hora_V, hora_W, hora_X
-            )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """, (
-            cliente, proyecto, fecha.strftime("%Y-%m-%d"), hora_Q, int(min_viaje_ida), float(volumen_m3),
-            requiere_bomba, dosificadora, int(mixer_id),
-            R.strftime("%H:%M"), S.strftime("%H:%M"), T.strftime("%H:%M"),
-            U.strftime("%H:%M"), V.strftime("%H:%M"), W.strftime("%H:%M"), X.strftime("%H:%M")
-        ))
-        conn.commit()
-        st.success("✅ Viaje guardado correctamente")
+        # Normaliza codigo de dosificadora
+dosif_codigo = dosificadora  # ya viene "DF-01"/"DF-06" desde tu selectbox
+fecha_str = fecha.strftime("%Y-%m-%d")
+fecha_hora_q = f"{fecha_str} {hora_Q}"  # para consultas más fáciles
+
+ciclo_total_min = int((X - S).total_seconds() // 60)  # (X - S) en minutos
+min_viaje_regreso = int(min_viaje_ida)                # puedes diferenciar luego si quieres
+
+c.execute("""
+INSERT INTO agenda (
+    cliente, proyecto, fecha, hora_Q, min_viaje_ida, volumen_m3, requiere_bomba,
+    dosificadora, mixer_id, hora_R, hora_S, hora_T, hora_U, hora_V, hora_W, hora_X,
+    estado, fecha_hora_q, ciclo_total_min, min_viaje_regreso, dosif_codigo
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+""", (
+    cliente, proyecto, fecha_str, hora_Q, int(min_viaje_ida), float(volumen_m3), requiere_bomba,
+    dosificadora, int(mixer_id), R.strftime("%H:%M"), S.strftime("%H:%M"), T.strftime("%H:%M"),
+    U.strftime("%H:%M"), V.strftime("%H:%M"), W.strftime("%H:%M"), X.strftime("%H:%M"),
+    "Programado", fecha_hora_q, ciclo_total_min, min_viaje_regreso, dosif_codigo
+))
+conn.commit()
+st.success("✅ Viaje guardado correctamente")
 
 # 4) Calendario del día
 with tabs[3]:
-    st.subheader("Agenda del día")
-    hoy = datetime.now().strftime("%Y-%m-%d")
-    df_agenda = pd.read_sql("SELECT * FROM agenda WHERE fecha = ?", conn, params=(hoy,))
-    if df_agenda.empty:
-        st.info("No hay viajes registrados para hoy.")
+    st.subheader("Calendario del día (viajes y recursos)")
+
+    # Selecciona fecha a visualizar
+    fecha_sel = st.date_input("Fecha", datetime.now()).strftime("%Y-%m-%d")
+
+    # --- Resumen por proyecto (Proyecto | Hora Q | Mixers)
+    df_day = pd.read_sql("""
+        SELECT proyecto, cliente, fecha, hora_Q, mixer_id
+        FROM agenda
+        WHERE fecha = ?
+        ORDER BY hora_Q
+    """, conn, params=(fecha_sel,))
+
+    if df_day.empty:
+        st.info("No hay viajes para la fecha seleccionada.")
     else:
-        st.dataframe(df_agenda, use_container_width=True)
+        # Traer 'Unidad' y 'Placa' de mixers
+        df_mix = pd.read_sql("SELECT id, unidad_id, placa FROM mixers", conn)
+        id_to_label = {int(r["id"]): f"{r['unidad_id'] or 's/n'} ({r['placa']})" for _, r in df_mix.iterrows()}
+
+        # Agrupar por proyecto y hora_Q, listando mixers
+        df_day["Mixer"] = df_day["mixer_id"].map(id_to_label)
+        resumen = (df_day
+                   .groupby(["proyecto", "hora_Q"], as_index=False)
+                   .agg({"Mixer": lambda s: ", ".join(sorted(set([x for x in s if pd.notna(x)])))})
+                  )
+        resumen.rename(columns={"proyecto": "Proyecto", "hora_Q": "Hora en obra (Q)"}, inplace=True)
+
+        st.markdown("### 🧾 Resumen del día por proyecto")
+        try:
+            st.dataframe(resumen, use_container_width=True, hide_index=True)
+        except TypeError:
+            st.dataframe(resumen.style.hide(axis="index"), use_container_width=True)
+
+    st.markdown("---")
+
+    # --- Agenda por mixer (slots 15')
+    st.markdown("### 🚛 Agenda por Mixer (15 min)")
+
+    # Selector mixer (sin mostrar ID)
+    df_mix_all = pd.read_sql("SELECT id, unidad_id, placa, habilitado FROM mixers ORDER BY id", conn)
+    if df_mix_all.empty:
+        st.info("No hay mixers en el sistema.")
+    else:
+        opciones_mx = {
+            f"{(r['unidad_id'] or 's/n')} — {r['placa']} {'[HAB]' if r['habilitado']==1 else '[DESH]'}": int(r["id"])
+            for _, r in df_mix_all.iterrows()
+        }
+        sel_mx_label = st.selectbox("Selecciona mixer", list(opciones_mx.keys()))
+        sel_mx_id = opciones_mx[sel_mx_label]
+
+        slots = build_slots_15(fecha_sel)  # 96 slots del día
+        busy = mixer_busy_ranges_for_day(conn, sel_mx_id, fecha_sel)
+        marks = mark_busy(slots, busy)
+
+        # Render compacto: mostramos cada hora con sus 4 bloques de 15'
+        # Construimos una tabla: Hora | 00 | 15 | 30 | 45
+        rows = []
+        for i, s in enumerate(slots):
+            if s.minute == 0:
+                # fila nueva
+                hour = s.strftime("%H:00")
+                blocks = marks[i:i+4]  # 00,15,30,45
+                if len(blocks) < 4:
+                    blocks += [""] * (4 - len(blocks))
+                rows.append([hour] + blocks)
+
+        df_grid = pd.DataFrame(rows, columns=["Hora", ":00", ":15", ":30", ":45"])
+        st.dataframe(df_grid, use_container_width=True, hide_index=True)
+        st.caption("■ = ocupado | · = libre (según [S..X])")
+
+    st.markdown("---")
+
+    # --- Agenda por dosificadora (slots 15')
+    st.markdown("### 🏭 Agenda por Dosificadora (15 min)")
+
+    df_dos = pd.read_sql("SELECT codigo FROM dosif WHERE habilitado=1", conn)
+    if df_dos.empty:
+        st.info("No hay dosificadoras habilitadas.")
+    else:
+        dos_opts = df_dos["codigo"].tolist()
+        sel_dos = st.selectbox("Selecciona dosificadora", dos_opts, index=0)
+
+        slots_d = build_slots_15(fecha_sel)
+        busy_d = dosif_busy_ranges_for_day(conn, sel_dos, fecha_sel)
+        marks_d = mark_busy(slots_d, busy_d)
+
+        rows_d = []
+        for i, s in enumerate(slots_d):
+            if s.minute == 0:
+                hour = s.strftime("%H:00")
+                blocks = marks_d[i:i+4]
+                if len(blocks) < 4:
+                    blocks += [""] * (4 - len(blocks))
+                rows_d.append([hour] + blocks)
+
+        df_grid_d = pd.DataFrame(rows_d, columns=["Hora", ":00", ":15", ":30", ":45"])
+        st.dataframe(df_grid_d, use_container_width=True, hide_index=True)
+        st.caption("■ = ocupado | · = libre (según [S..T])")
