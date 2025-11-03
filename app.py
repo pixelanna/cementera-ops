@@ -259,6 +259,7 @@ def seed_data():
     conn.commit()
 
 seed_data()
+ensure_required_params(conn)
 
 # ---------------------------------------------------
 # Función de cálculo de tiempos
@@ -505,12 +506,11 @@ with tabs[2]:
     if st.button("Guardar viaje"):
         # --- Validaciones rápidas ---
         # Mixer existe
-        c.execute("SELECT capacidad_m3 FROM mixers WHERE id=?", (int(mixer_id),))
+        c.execute("SELECT 1 FROM mixers WHERE id=?", (int(mixer_id),))
         row = c.fetchone()
         if not row:
             st.error("Mixer no existe. Revisa el ID interno.")
             st.stop()
-        capacidad_mixer = float(row[0])
 
         # Parámetros del sistema
         for key in ["Tiempo_descarga_min", "Margen_lavado_min", "Tiempo_cambio_obra_min"]:
@@ -527,8 +527,12 @@ with tabs[2]:
         # --- Cálculo de tiempos (todo dentro del botón) ---
         try:
             R, S, T, U, V, W, X = calcular_tiempos(
-                hora_Q, int(min_viaje_ida), float(volumen_m3), capacidad_mixer,
-                int(tiempo_descarga_min), int(margen_lavado_min), int(tiempo_cambio_obra_min)
+                hora_Q,
+                int(min_viaje_ida),
+                float(volumen_m3),
+                int(tiempo_descarga_min),
+                int(margen_lavado_min),
+                int(tiempo_cambio_obra_min),
             )
         except ValueError:
             st.error("Formato de hora inválido. Usa HH:MM (ej. 06:20).")
