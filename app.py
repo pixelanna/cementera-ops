@@ -627,23 +627,23 @@ with tabs[3]:
     fecha_sel = d.strftime("%Y-%m-%d")
 
     with st.expander("🛠 Ver fechas guardadas (últimos 50)"):
-    df_chk = pd.read_sql("SELECT id, proyecto, fecha, hora_Q FROM agenda ORDER BY id DESC LIMIT 50", conn)
-    st.dataframe(df_chk, use_container_width=True, hide_index=True)
+        df_chk = pd.read_sql("SELECT id, proyecto, fecha, hora_Q FROM agenda ORDER BY id DESC LIMIT 50", conn)
+        st.dataframe(df_chk, use_container_width=True, hide_index=True)
+        
+        # --- Resumen por proyecto (Proyecto | Hora Q | Mixers)
+        df_day = pd.read_sql("""
+            SELECT proyecto, cliente, fecha, hora_Q, mixer_id
+            FROM agenda
+            WHERE fecha = ?
+            ORDER BY hora_Q
+        """, conn, params=(fecha_sel,))
     
-    # --- Resumen por proyecto (Proyecto | Hora Q | Mixers)
-    df_day = pd.read_sql("""
-        SELECT proyecto, cliente, fecha, hora_Q, mixer_id
-        FROM agenda
-        WHERE fecha = ?
-        ORDER BY hora_Q
-    """, conn, params=(fecha_sel,))
-
-    if df_day.empty:
-        st.info("No hay viajes para la fecha seleccionada.")
-    else:
-        # Traer 'Unidad' y 'Placa' de mixers
-        df_mix = pd.read_sql("SELECT id, unidad_id, placa FROM mixers", conn)
-        id_to_label = {int(r["id"]): f"{r['unidad_id'] or 's/n'} ({r['placa']})" for _, r in df_mix.iterrows()}
+        if df_day.empty:
+            st.info("No hay viajes para la fecha seleccionada.")
+        else:
+            # Traer 'Unidad' y 'Placa' de mixers
+            df_mix = pd.read_sql("SELECT id, unidad_id, placa FROM mixers", conn)
+            id_to_label = {int(r["id"]): f"{r['unidad_id'] or 's/n'} ({r['placa']})" for _, r in df_mix.iterrows()}
 
         # Agrupar por proyecto y hora_Q, listando mixers
         df_day["Mixer"] = df_day["mixer_id"].map(id_to_label)
