@@ -5,7 +5,7 @@ from datetime import datetime, timedelta
 import math
 
 st.set_page_config(page_title="Cementera OPS", layout="wide")
-st.title("🚧 Cementera OPS - v0.1")
+st.title("🚧 Constructora ETERNA | División CONETSA - Plantel Olímpico - v0.1")
 
 # ---------------------------------------------------
 # Conexión a SQLite (cacheada para Streamlit Cloud)
