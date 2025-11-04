@@ -339,10 +339,31 @@ tabs = st.tabs(["⚙️ Parámetros", "🚛 Mixers", "🏗️ Nuevo Proyecto", "
 with tabs[0]:
     st.subheader("Parámetros (editar en línea)")
 
-    # 1) Cargar parámetros ordenados
+    # 1) Carga
     dfp = pd.read_sql("SELECT id, nombre, valor FROM parametros ORDER BY nombre", conn)
 
-    # 2) Define cuáles deben ser numéricos (los demás quedan como texto)
+    # 2) Vista editable: SIN configurar la columna Valor (para que sea editable)
+    view = dfp.copy()
+    view.insert(0, "N°", range(1, len(view) + 1))
+    view.rename(columns={"nombre": "Nombre", "valor": "Valor"}, inplace=True)
+    view = view[["N°", "Nombre", "Valor"]]
+
+    st.caption("Haz clic en la celda Valor para editar. Presiona Enter para confirmar el cambio en la celda.")
+    edited = st.data_editor(
+        view,
+        hide_index=True,
+        use_container_width=True,
+        disabled=False,                # fuerza modo editable
+        num_rows="fixed",              # no se agregan filas, solo editar
+        column_config={
+            "N°": st.column_config.NumberColumn(disabled=True),
+            "Nombre": st.column_config.TextColumn(disabled=True),
+            # OJO: NO configuramos 'Valor' para dejarlo editable por defecto
+        },
+        key="param_table_editor_v2",   # clave nueva para evitar cacheos
+    )
+
+    # 3) Guardar cambios
     NUMERIC_KEYS = {
         "Intervalo_min",
         "Capacidad_mixer_m3",
@@ -350,41 +371,19 @@ with tabs[0]:
         "Tiempo_descarga_min",
         "Margen_lavado_min",
         "Tiempo_cambio_obra_min",
-        # agrega aquí otros que tengas numéricos
     }
 
-    # 3) Vista amigable (sin id) y con numeración visual N°
-    view = dfp.copy()
-    view.insert(0, "N°", range(1, len(view) + 1))
-    view = view[["N°", "nombre", "valor"]]
-    view.rename(columns={"nombre": "Nombre", "valor": "Valor"}, inplace=True)
-
-    st.caption("Haz clic en la celda para editar. Usa punto decimal (e.g. 8.5).")
-    edited = st.data_editor(
-        view,
-        hide_index=True,
-        use_container_width=True,
-        column_config={
-            "N°": st.column_config.NumberColumn(disabled=True),
-            "Nombre": st.column_config.TextColumn(disabled=True),
-            "Valor": st.column_config.TextColumn(help="Edita el valor. Si es numérico, usa punto decimal.")
-        },
-        key="param_table_editor",
-    )
-
-    # 4) Guardar cambios: normaliza numéricos y actualiza SQLite (case-insensitive)
     def _normalize_number(x):
         if x is None:
             return None
         s = str(x).strip().replace(",", ".")
-        # permite enteros o decimales
         try:
-            return str(float(s))  # guardamos como texto numérico consistente
+            return str(float(s))
         except Exception:
-            return s  # si no es número, se guarda tal cual
+            return s
 
-    col_save, col_refresh = st.columns([1,1])
-    with col_save:
+    c1, c2 = st.columns([1,1])
+    with c1:
         if st.button("💾 Guardar cambios de la tabla"):
             cur = conn.cursor()
             ok, err = 0, 0
@@ -392,48 +391,27 @@ with tabs[0]:
                 name = str(row["Nombre"]).strip()
                 val  = row["Valor"]
 
-                # Si es clave numérica, intenta normalizar a número (con punto)
                 if name in NUMERIC_KEYS:
                     val = _normalize_number(val)
-
-                    # Validación: debe convertirse a float correctamente
                     try:
-                        float(str(val))
+                        float(str(val))  # valida
                     except Exception:
                         err += 1
                         continue
 
                 try:
-                    cur.execute(
-                        "UPDATE parametros SET valor=? WHERE lower(nombre)=lower(?)",
-                        (str(val), name)
-                    )
+                    cur.execute("UPDATE parametros SET valor=? WHERE lower(nombre)=lower(?)", (str(val), name))
                     ok += 1
                 except Exception:
                     err += 1
-
             conn.commit()
-            st.success(f"✅ Guardado: {ok} parámetro(s) actualizado(s). {'❗Errores: '+str(err) if err else ''}")
+            # (si usas respaldo a Gist, descomenta la siguiente línea)
+            # backup_db_to_gist()
+            st.success(f"✅ Guardado: {ok} parámetro(s). {'❗Errores: '+str(err) if err else ''}")
 
-    with col_refresh:
+    with c2:
         if st.button("🔄 Recargar"):
             st.rerun()
-
-    # 5) Métricas rápidas (si existen)
-    try:
-        intervalo = float(str(pd.read_sql("SELECT valor FROM parametros WHERE lower(nombre)='intervalo_min'", conn).iloc[0,0]).replace(",", "."))
-        tcarga   = float(str(pd.read_sql("SELECT valor FROM parametros WHERE lower(nombre)='tiempo_carga_min'", conn).iloc[0,0]).replace(",", "."))
-        tdesc    = float(str(pd.read_sql("SELECT valor FROM parametros WHERE lower(nombre)='tiempo_descarga_min'", conn).iloc[0,0]).replace(",", "."))
-        mlav     = float(str(pd.read_sql("SELECT valor FROM parametros WHERE lower(nombre)='margen_lavado_min'", conn).iloc[0,0]).replace(",", "."))
-        tcambio  = float(str(pd.read_sql("SELECT valor FROM parametros WHERE lower(nombre)='tiempo_cambio_obra_min'", conn).iloc[0,0]).replace(",", "."))
-        c1, c2, c3, c4, c5 = st.columns(5)
-        c1.metric("Intervalo (min)", f"{intervalo:.0f}")
-        c2.metric("Carga base 8.5m³ (min)", f"{tcarga:.0f}")
-        c3.metric("Descarga (min)", f"{tdesc:.0f}")
-        c4.metric("Lavado (min)", f"{mlav:.0f}")
-        c5.metric("Cambio obra (min)", f"{tcambio:.0f}")
-    except Exception:
-        pass
 # 2) Mixers
 with tabs[1]:
     st.subheader("Listado de Mixers")
