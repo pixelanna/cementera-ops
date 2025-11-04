@@ -626,27 +626,27 @@ with tabs[3]:
     st.write(f"📅 Fecha seleccionada: **{d.strftime('%Y-%m-%d')}**")
     fecha_sel = d.strftime("%Y-%m-%d")
 
-    # --- Resumen por proyecto (Proyecto | Hora Q | Mixers)
-df_day = pd.read_sql("""
-    SELECT proyecto, cliente, fecha, hora_Q, mixer_id
-    FROM agenda
-    WHERE fecha = ?
-    ORDER BY hora_Q
-""", conn, params=(fecha_sel,))
-
-# Mapeo de mixers SIEMPRE definido
-df_mix = pd.read_sql("SELECT id, unidad_id, placa FROM mixers", conn)
-id_to_label = {int(r["id"]): f"{r['unidad_id'] or 's/n'} ({r['placa']})" for _, r in df_mix.iterrows()}
-
-def mixer_label(mid):
-    if pd.isna(mid):
-        return ""
-    try:
-        mid_i = int(mid)
-    except Exception:
-        return str(mid)
-    return id_to_label.get(mid_i, f"ID {mid_i}")
-
+        # --- Resumen por proyecto (Proyecto | Hora Q | Mixers)
+    df_day = pd.read_sql("""
+        SELECT proyecto, cliente, fecha, hora_Q, mixer_id
+        FROM agenda
+        WHERE fecha = ?
+        ORDER BY hora_Q
+    """, conn, params=(fecha_sel,))
+    
+    # Mapeo de mixers SIEMPRE definido (antes de usarlo)
+    df_mix = pd.read_sql("SELECT id, unidad_id, placa FROM mixers", conn)
+    id_to_label = {int(r["id"]): f"{r['unidad_id'] or 's/n'} ({r['placa']})" for _, r in df_mix.iterrows()}
+    
+    def mixer_label(mid):
+        if pd.isna(mid):
+            return ""
+        try:
+            mid_i = int(mid)
+        except Exception:
+            return str(mid)
+        return id_to_label.get(mid_i, f"ID {mid_i}")
+    
     if df_day.empty:
         st.info(f"No hay viajes para la fecha seleccionada ({fecha_sel}).")
     else:
@@ -663,60 +663,26 @@ def mixer_label(mid):
             st.dataframe(resumen, use_container_width=True, hide_index=True)
         except TypeError:
             st.dataframe(resumen.style.hide(axis="index"), use_container_width=True)
-        
-        with st.expander("🛠 Ver fechas guardadas (últimos 50)"):
-            df_chk = pd.read_sql("SELECT id, proyecto, fecha, hora_Q FROM agenda ORDER BY id DESC LIMIT 50", conn)
-            st.dataframe(df_chk, use_container_width=True, hide_index=True)
-        
-        # --- Resumen por proyecto (Proyecto | Hora Q | Mixers)
-        df_day = pd.read_sql("""
-            SELECT proyecto, cliente, fecha, hora_Q, mixer_id
-            FROM agenda
-            WHERE fecha = ?
-            ORDER BY hora_Q
-        """, conn, params=(fecha_sel,))
+        st.markdown("---")
     
-        if df_day.empty:
-            st.info("No hay viajes para la fecha seleccionada.")
+        # --- Agenda por mixer (slots 15')
+        st.markdown("### 🚛 Agenda por Mixer (15 min)")
+    
+        # Selector mixer (sin mostrar ID)
+        df_mix_all = pd.read_sql("SELECT id, unidad_id, placa, habilitado FROM mixers ORDER BY id", conn)
+        if df_mix_all.empty:
+            st.info("No hay mixers en el sistema.")
         else:
-            # Traer 'Unidad' y 'Placa' de mixers
-            df_mix = pd.read_sql("SELECT id, unidad_id, placa FROM mixers", conn)
-            id_to_label = {int(r["id"]): f"{r['unidad_id'] or 's/n'} ({r['placa']})" for _, r in df_mix.iterrows()}
-
-        # Agrupar por proyecto y hora_Q, listando mixers
-        df_day["Mixer"] = df_day["mixer_id"].map(id_to_label)
-        resumen = (df_day
-                   .groupby(["proyecto", "hora_Q"], as_index=False)
-                   .agg({"Mixer": lambda s: ", ".join(sorted(set([x for x in s if pd.notna(x)])))})
-                  )
-        resumen.rename(columns={"proyecto": "Proyecto", "hora_Q": "Hora en obra (Q)"}, inplace=True)
-
-        st.markdown("### 🧾 Resumen del día por proyecto")
-        try:
-            st.dataframe(resumen, use_container_width=True, hide_index=True)
-        except TypeError:
-            st.dataframe(resumen.style.hide(axis="index"), use_container_width=True)
-
-    st.markdown("---")
-
-    # --- Agenda por mixer (slots 15')
-    st.markdown("### 🚛 Agenda por Mixer (15 min)")
-
-    # Selector mixer (sin mostrar ID)
-    df_mix_all = pd.read_sql("SELECT id, unidad_id, placa, habilitado FROM mixers ORDER BY id", conn)
-    if df_mix_all.empty:
-        st.info("No hay mixers en el sistema.")
-    else:
-        opciones_mx = {
-            f"{(r['unidad_id'] or 's/n')} — {r['placa']} {'[HAB]' if r['habilitado']==1 else '[DESH]'}": int(r["id"])
-            for _, r in df_mix_all.iterrows()
-        }
-        sel_mx_label = st.selectbox("Selecciona mixer", list(opciones_mx.keys()))
-        sel_mx_id = opciones_mx[sel_mx_label]
-
-        slots = build_slots_15(fecha_sel)  # 96 slots del día
-        busy = mixer_busy_ranges_for_day(conn, sel_mx_id, fecha_sel)
-        marks = mark_busy(slots, busy)
+            opciones_mx = {
+                f"{(r['unidad_id'] or 's/n')} — {r['placa']} {'[HAB]' if r['habilitado']==1 else '[DESH]'}": int(r["id"])
+                for _, r in df_mix_all.iterrows()
+            }
+            sel_mx_label = st.selectbox("Selecciona mixer", list(opciones_mx.keys()))
+            sel_mx_id = opciones_mx[sel_mx_label]
+    
+            slots = build_slots_15(fecha_sel)  # 96 slots del día
+            busy = mixer_busy_ranges_for_day(conn, sel_mx_id, fecha_sel)
+            marks = mark_busy(slots, busy)
 
         # Render compacto: mostramos cada hora con sus 4 bloques de 15'
         # Construimos una tabla: Hora | 00 | 15 | 30 | 45
