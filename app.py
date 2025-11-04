@@ -337,73 +337,103 @@ tabs = st.tabs(["⚙️ Parámetros", "🚛 Mixers", "🏗️ Nuevo Proyecto", "
 
 # 1) Parámetros
 with tabs[0]:
-    st.subheader("Parámetros del sistema")
+    st.subheader("Parámetros (editar en línea)")
 
-    # --- Mostrar tabla con índice desde 1 ---
-    dfp = pd.read_sql("SELECT nombre, valor FROM parametros ORDER BY nombre", conn)
-    dfp_display = dfp.copy()
-    dfp_display.index = range(1, len(dfp_display) + 1)
+    # 1) Cargar parámetros ordenados
+    dfp = pd.read_sql("SELECT id, nombre, valor FROM parametros ORDER BY nombre", conn)
 
+    # 2) Define cuáles deben ser numéricos (los demás quedan como texto)
+    NUMERIC_KEYS = {
+        "Intervalo_min",
+        "Capacidad_mixer_m3",
+        "Tiempo_carga_min",
+        "Tiempo_descarga_min",
+        "Margen_lavado_min",
+        "Tiempo_cambio_obra_min",
+        # agrega aquí otros que tengas numéricos
+    }
+
+    # 3) Vista amigable (sin id) y con numeración visual N°
+    view = dfp.copy()
+    view.insert(0, "N°", range(1, len(view) + 1))
+    view = view[["N°", "nombre", "valor"]]
+    view.rename(columns={"nombre": "Nombre", "valor": "Valor"}, inplace=True)
+
+    st.caption("Haz clic en la celda para editar. Usa punto decimal (e.g. 8.5).")
     edited = st.data_editor(
-        dfp_display,
-        key="param_editor",
+        view,
+        hide_index=True,
         use_container_width=True,
-        num_rows="fixed"  # evita agregar filas accidentalmente aquí
+        column_config={
+            "N°": st.column_config.NumberColumn(disabled=True),
+            "Nombre": st.column_config.TextColumn(disabled=True),
+            "Valor": st.column_config.TextColumn(help="Edita el valor. Si es numérico, usa punto decimal.")
+        },
+        key="param_table_editor",
     )
 
-    if st.button("💾 Guardar cambios de la tabla"):
-        # Escribimos todo lo editado
-        for _, row in edited.iterrows():
-            nombre = str(row["nombre"]).strip()
-            valor_raw = str(row["valor"]).strip()
-            # intenta castear a float si se puede
-            try:
-                valor = float(valor_raw)
-            except:
-                valor = valor_raw  # deja texto (fechas, etc.)
-            upsert_param(conn, nombre, valor)
-        st.success("Cambios guardados.")
+    # 4) Guardar cambios: normaliza numéricos y actualiza SQLite (case-insensitive)
+    def _normalize_number(x):
+        if x is None:
+            return None
+        s = str(x).strip().replace(",", ".")
+        # permite enteros o decimales
+        try:
+            return str(float(s))  # guardamos como texto numérico consistente
+        except Exception:
+            return s  # si no es número, se guarda tal cual
 
-    st.markdown("---")
+    col_save, col_refresh = st.columns([1,1])
+    with col_save:
+        if st.button("💾 Guardar cambios de la tabla"):
+            cur = conn.cursor()
+            ok, err = 0, 0
+            for _, row in edited.iterrows():
+                name = str(row["Nombre"]).strip()
+                val  = row["Valor"]
 
-    # --- Agregar parámetro (+) ---
-    st.markdown("### ➕ Agregar parámetro")
-    colA, colB, colC = st.columns([2, 2, 1])
-    with colA:
-        nuevo_nombre = st.text_input("Nombre (único)", placeholder="p.ej. Tiempo_cambio_obra_min")
-    with colB:
-        nuevo_valor = st.text_input("Valor", placeholder="p.ej. 4 ó 2025-11-03")
-    with colC:
-        if st.button("Agregar"):
-            if not nuevo_nombre:
-                st.error("Escribe un nombre.")
-            elif dfp["nombre"].str.lower().eq(nuevo_nombre.lower()).any():
-                st.warning("Ese nombre ya existe. Usa la tabla para editarlo o borra primero.")
-            else:
+                # Si es clave numérica, intenta normalizar a número (con punto)
+                if name in NUMERIC_KEYS:
+                    val = _normalize_number(val)
+
+                    # Validación: debe convertirse a float correctamente
+                    try:
+                        float(str(val))
+                    except Exception:
+                        err += 1
+                        continue
+
                 try:
-                    v = float(nuevo_valor)
-                except:
-                    v = nuevo_valor
-                upsert_param(conn, nuevo_nombre.strip(), v)
-                st.success(f"Parámetro '{nuevo_nombre}' agregado. Recarga para verlo en la tabla.")
+                    cur.execute(
+                        "UPDATE parametros SET valor=? WHERE lower(nombre)=lower(?)",
+                        (str(val), name)
+                    )
+                    ok += 1
+                except Exception:
+                    err += 1
 
-    st.markdown("---")
+            conn.commit()
+            st.success(f"✅ Guardado: {ok} parámetro(s) actualizado(s). {'❗Errores: '+str(err) if err else ''}")
 
-    # --- Eliminar parámetro (🗑️) ---
-    st.markdown("### 🗑️ Eliminar parámetro")
-    if len(dfp) == 0:
-        st.info("No hay parámetros para eliminar.")
-    else:
-        colD, colE = st.columns([3, 1])
-        with colD:
-            to_delete = st.selectbox("Selecciona el parámetro a eliminar", dfp["nombre"].tolist())
-        with colE:
-            if st.button("Eliminar", type="secondary"):
-                cur = conn.cursor()
-                cur.execute("DELETE FROM parametros WHERE nombre = ?", (to_delete,))
-                conn.commit()
-                st.success(f"Parámetro '{to_delete}' eliminado. Recarga para actualizar la tabla.")
+    with col_refresh:
+        if st.button("🔄 Recargar"):
+            st.rerun()
 
+    # 5) Métricas rápidas (si existen)
+    try:
+        intervalo = float(str(pd.read_sql("SELECT valor FROM parametros WHERE lower(nombre)='intervalo_min'", conn).iloc[0,0]).replace(",", "."))
+        tcarga   = float(str(pd.read_sql("SELECT valor FROM parametros WHERE lower(nombre)='tiempo_carga_min'", conn).iloc[0,0]).replace(",", "."))
+        tdesc    = float(str(pd.read_sql("SELECT valor FROM parametros WHERE lower(nombre)='tiempo_descarga_min'", conn).iloc[0,0]).replace(",", "."))
+        mlav     = float(str(pd.read_sql("SELECT valor FROM parametros WHERE lower(nombre)='margen_lavado_min'", conn).iloc[0,0]).replace(",", "."))
+        tcambio  = float(str(pd.read_sql("SELECT valor FROM parametros WHERE lower(nombre)='tiempo_cambio_obra_min'", conn).iloc[0,0]).replace(",", "."))
+        c1, c2, c3, c4, c5 = st.columns(5)
+        c1.metric("Intervalo (min)", f"{intervalo:.0f}")
+        c2.metric("Carga base 8.5m³ (min)", f"{tcarga:.0f}")
+        c3.metric("Descarga (min)", f"{tdesc:.0f}")
+        c4.metric("Lavado (min)", f"{mlav:.0f}")
+        c5.metric("Cambio obra (min)", f"{tcambio:.0f}")
+    except Exception:
+        pass
 # 2) Mixers
 with tabs[1]:
     st.subheader("Listado de Mixers")
