@@ -626,9 +626,47 @@ with tabs[3]:
     st.write(f"📅 Fecha seleccionada: **{d.strftime('%Y-%m-%d')}**")
     fecha_sel = d.strftime("%Y-%m-%d")
 
-    with st.expander("🛠 Ver fechas guardadas (últimos 50)"):
-        df_chk = pd.read_sql("SELECT id, proyecto, fecha, hora_Q FROM agenda ORDER BY id DESC LIMIT 50", conn)
-        st.dataframe(df_chk, use_container_width=True, hide_index=True)
+    # --- Resumen por proyecto (Proyecto | Hora Q | Mixers)
+df_day = pd.read_sql("""
+    SELECT proyecto, cliente, fecha, hora_Q, mixer_id
+    FROM agenda
+    WHERE fecha = ?
+    ORDER BY hora_Q
+""", conn, params=(fecha_sel,))
+
+# Mapeo de mixers SIEMPRE definido
+df_mix = pd.read_sql("SELECT id, unidad_id, placa FROM mixers", conn)
+id_to_label = {int(r["id"]): f"{r['unidad_id'] or 's/n'} ({r['placa']})" for _, r in df_mix.iterrows()}
+
+def mixer_label(mid):
+    if pd.isna(mid):
+        return ""
+    try:
+        mid_i = int(mid)
+    except Exception:
+        return str(mid)
+    return id_to_label.get(mid_i, f"ID {mid_i}")
+
+    if df_day.empty:
+        st.info(f"No hay viajes para la fecha seleccionada ({fecha_sel}).")
+    else:
+        df_day["Mixer"] = df_day["mixer_id"].apply(mixer_label)
+        resumen = (
+            df_day
+            .groupby(["proyecto", "hora_Q"], as_index=False)
+            .agg({"Mixer": lambda s: ", ".join(sorted(set([x for x in s if pd.notna(x) and x])) )})
+        )
+        resumen.rename(columns={"proyecto": "Proyecto", "hora_Q": "Hora en obra (Q)"}, inplace=True)
+    
+        st.markdown("### 🧾 Resumen del día por proyecto")
+        try:
+            st.dataframe(resumen, use_container_width=True, hide_index=True)
+        except TypeError:
+            st.dataframe(resumen.style.hide(axis="index"), use_container_width=True)
+        
+        with st.expander("🛠 Ver fechas guardadas (últimos 50)"):
+            df_chk = pd.read_sql("SELECT id, proyecto, fecha, hora_Q FROM agenda ORDER BY id DESC LIMIT 50", conn)
+            st.dataframe(df_chk, use_container_width=True, hide_index=True)
         
         # --- Resumen por proyecto (Proyecto | Hora Q | Mixers)
         df_day = pd.read_sql("""
