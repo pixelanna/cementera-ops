@@ -609,8 +609,27 @@ with tabs[3]:
     st.subheader("Calendario del día (viajes y recursos)")
 
     # Selecciona fecha a visualizar
-    fecha_sel = st.date_input("Fecha", datetime.now(), key="cal_fecha").strftime("%Y-%m-%d")
+    from zoneinfo import ZoneInfo
+    # Navegación por días: Ayer / Hoy / Mañana (en Tegucigalpa)
+    local_today = datetime.now(ZoneInfo("America/Tegucigalpa")).date()
+    d = st.session_state.get("cal_d", local_today)
+    
+    colp, colh, coln = st.columns([1, 2, 1])
+    if colp.button("◀ Ayer"):
+        d = d - timedelta(days=1)
+    if colh.button("Hoy"):
+        d = local_today
+    if coln.button("Mañana ▶"):
+        d = d + timedelta(days=1)
+    
+    st.session_state["cal_d"] = d
+    st.write(f"📅 Fecha seleccionada: **{d.strftime('%Y-%m-%d')}**")
+    fecha_sel = d.strftime("%Y-%m-%d")
 
+    with st.expander("🛠 Ver fechas guardadas (últimos 50)"):
+    df_chk = pd.read_sql("SELECT id, proyecto, fecha, hora_Q FROM agenda ORDER BY id DESC LIMIT 50", conn)
+    st.dataframe(df_chk, use_container_width=True, hide_index=True)
+    
     # --- Resumen por proyecto (Proyecto | Hora Q | Mixers)
     df_day = pd.read_sql("""
         SELECT proyecto, cliente, fecha, hora_Q, mixer_id
