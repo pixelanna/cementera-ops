@@ -674,31 +674,41 @@ with tabs[3]:
         st.markdown("---")
     
         # --- Agenda por mixer (slots 15')
-        st.markdown("### 🚛 Agenda por Mixer (15 min)")
-    
-        # Selector mixer (sin mostrar ID)
-        df_mix_all = pd.read_sql("SELECT id, unidad_id, placa, habilitado FROM mixers ORDER BY id", conn)
+st.markdown("### 🚛 Agenda por Mixer (15 min)")
+
+# 1) Cargar mixers
+df_mix_all = pd.read_sql(
+    "SELECT id, unidad_id, placa, habilitado FROM mixers ORDER BY id",
+    conn
+)
+
+# 2) Guardas si no hay mixers
 if df_mix_all.empty:
     st.info("No hay mixers en el sistema.")
 else:
+    # 3) Selector de mixer (labels bonitos)
     opciones_mx = {
-        f"{(r['unidad_id'] or 's/n')} — {r['placa']} {'[HAB]' if r['habilitado']==1 else '[DESH]'}": int(r["id"])
+        f"{(r['unidad_id'] or 's/n')} — {r['placa']} {'[HAB]' if int(r['habilitado'])==1 else '[DESH]'}": int(r["id"])
         for _, r in df_mix_all.iterrows()
     }
-    sel_mx_label = st.selectbox("Selecciona mixer", list(opciones_mx.keys()))
+    sel_mx_label = st.selectbox(
+        "Selecciona mixer",
+        list(opciones_mx.keys()),
+        key=f"sel_mx_{fecha_sel}"  # clave única por día
+    )
     sel_mx_id = opciones_mx[sel_mx_label]
 
-    # 🧩 Solo dentro del else generamos los slots y la tabla
-    slots = build_slots_15(fecha_sel)
-    busy = mixer_busy_ranges_for_day(conn, sel_mx_id, fecha_sel)
+    # 4) Construir slots y marcas SOLO aquí dentro
+    slots = build_slots_15(fecha_sel)  # 96 slots del día
+    busy  = mixer_busy_ranges_for_day(conn, sel_mx_id, fecha_sel)  # rangos [S..X]
     marks = mark_busy(slots, busy)
 
-    # Render compacto: mostramos cada hora con sus 4 bloques de 15'
+    # 5) Render: tabla Hora | 00 | 15 | 30 | 45
     rows = []
     for i, s in enumerate(slots):
         if s.minute == 0:
-            hour = s.strftime("%H:00")
-            blocks = marks[i:i+4]
+            hour = s.strftime("%H:%M")
+            blocks = marks[i:i+4]  # 00,15,30,45
             if len(blocks) < 4:
                 blocks += [""] * (4 - len(blocks))
             rows.append([hour] + blocks)
@@ -707,36 +717,46 @@ else:
     st.dataframe(df_grid, use_container_width=True, hide_index=True)
     st.caption("■ = ocupado | · = libre (según [S..X])")
 
-    st.markdown("---")
+st.markdown("---")
 
-    # --- Agenda por dosificadora (slots 15')
-    st.markdown("### 🏭 Agenda por Dosificadora (15 min)")
+# --- Agenda por dosificadora (slots 15')
+st.markdown("### 🏭 Agenda por Dosificadora (15 min)")
 
-    df_dos = pd.read_sql("SELECT codigo FROM dosif WHERE habilitado=1", conn)
-    if df_dos.empty:
-        st.info("No hay dosificadoras habilitadas.")
-    else:
-        dos_opts = df_dos["codigo"].tolist()
-        sel_dos = st.selectbox("Selecciona dosificadora", dos_opts, index=0)
+# 1) Cargar dosificadoras habilitadas
+df_dos = pd.read_sql("SELECT codigo FROM dosif WHERE habilitado=1", conn)
 
-        slots_d = build_slots_15(fecha_sel)
-        busy_d = dosif_busy_ranges_for_day(conn, sel_dos, fecha_sel)
-        marks_d = mark_busy(slots_d, busy_d)
+# 2) Guardas si no hay dosificadoras
+if df_dos.empty:
+    st.info("No hay dosificadoras habilitadas.")
+else:
+    dos_opts = df_dos["codigo"].tolist()
+    sel_dos = st.selectbox(
+        "Selecciona dosificadora",
+        dos_opts,
+        index=0,
+        key=f"sel_dos_{fecha_sel}"  # clave única por día
+    )
 
-        rows_d = []
-        for i, s in enumerate(slots_d):
-            if s.minute == 0:
-                hour = s.strftime("%H:00")
-                blocks = marks_d[i:i+4]
-                if len(blocks) < 4:
-                    blocks += [""] * (4 - len(blocks))
-                rows_d.append([hour] + blocks)
+    # 3) Slots y marcas [S..T]
+    slots_d = build_slots_15(fecha_sel)
+    busy_d  = dosif_busy_ranges_for_day(conn, sel_dos, fecha_sel)
+    marks_d = mark_busy(slots_d, busy_d)
 
-        df_grid_d = pd.DataFrame(rows_d, columns=["Hora", ":00", ":15", ":30", ":45"])
-        st.dataframe(df_grid_d, use_container_width=True, hide_index=True)
-        st.caption("■ = ocupado | · = libre (según [S..T])")
+    # 4) Render tabla
+    rows_d = []
+    for i, s in enumerate(slots_d):
+        if s.minute == 0:
+            hour = s.strftime("%H:%M")
+            blocks = marks_d[i:i+4]
+            if len(blocks) < 4:
+                blocks += [""] * (4 - len(blocks))
+            rows_d.append([hour] + blocks)
 
-    st.markdown("---")
+    df_grid_d = pd.DataFrame(rows_d, columns=["Hora", ":00", ":15", ":30", ":45"])
+    st.dataframe(df_grid_d, use_container_width=True, hide_index=True)
+    st.caption("■ = ocupado | · = libre (según [S..T])")
+
+st.markdown("---")
 with tabs[3]:
     st.markdown("## 📝 Editar / Eliminar viaje del día")
 
