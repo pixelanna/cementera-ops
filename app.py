@@ -567,7 +567,18 @@ try:
     st.toast("✅ Respaldo OK en GitHub" if ok else f"⚠️ {msg}")
 except Exception:
     pass
-ensure_schema(conn)
+
+# 1) Probar integridad y asegurar esquema
+try:
+    # Si la DB se abrió pero está mal, integrity_check lo detecta
+    if not _sqlite_integrity_ok(conn):
+        # reconstruir limpia local
+        conn = rebuild_empty_db(DB_FILE, conn)
+    ensure_schema(conn)
+except sqlite3.DatabaseError:
+    # Si falló incluso al crear esquema, reconstruir y reintentar una vez
+    conn = rebuild_empty_db(DB_FILE, conn)
+    ensure_schema(conn)
 
 def recalc_and_update_agenda(conn, agenda_id, fecha_str, hora_Q, min_viaje_ida, volumen_m3,
                              requiere_bomba, dosif_codigo, mixer_id):
@@ -994,6 +1005,17 @@ with st.expander("🛠️ Respaldo GitHub (debug)"):
         if st.button("⬇️ Intentar restaurar ahora"):
             ok, msg = restore_db_from_gist()
             st.write("restore_db_from_gist():", ok, msg)
+
+    with st.expander("🧹 Reparación avanzada (si ves errores de esquema)"):
+    cA, cB = st.columns(2)
+    with cA:
+        if st.button("❌ Eliminar DB del Gist (solo si está corrupta)"):
+            ok, msg = delete_db_in_gist()
+            st.write("delete_db_in_gist():", ok, msg)
+    with cB:
+        if st.button("⬆️ Subir DB local (limpia) al Gist"):
+            ok, msg = backup_db_to_gist()
+            st.write("backup_db_to_gist():", ok, msg)
 
 # 2) Mixers
 with tabs[1]:
