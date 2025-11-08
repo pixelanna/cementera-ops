@@ -531,6 +531,38 @@ except Exception:
     with c2:
         if st.button("🔄 Recargar"):
             st.rerun()
+
+with st.expander("🛠️ Respaldo GitHub (debug)"):
+    exists = os.path.exists(DB_FILE)
+    size = os.path.getsize(DB_FILE) if exists else 0
+    st.write(f"DB local: `{DB_FILE}` existe = {exists}, tamaño = {size} bytes")
+    st.write("Secrets cargados:", bool(GITHUB_TOKEN), bool(GIST_ID), DB_FILE)
+
+    colA, colB, colC = st.columns(3)
+    with colA:
+        if st.button("🔎 Probar conexión a Gist"):
+            try:
+                r = requests.get(f"https://api.github.com/gists/{GIST_ID}",
+                                 headers=_gh_headers(), timeout=15)
+                st.write("GET /gists/{id} status:", r.status_code)
+                if r.ok:
+                    files = r.json().get("files", {})
+                    st.write("Archivos actuales en el Gist:", list(files.keys()))
+                else:
+                    st.error(r.text)
+            except Exception as e:
+                st.error(f"Error probando conexión: {e}")
+
+    with colB:
+        if st.button("⬆️ Forzar respaldo ahora"):
+            ok, msg = backup_db_to_gist()
+            st.write("backup_db_to_gist():", ok, msg)
+
+    with colC:
+        if st.button("⬇️ Intentar restaurar ahora"):
+            ok, msg = restore_db_from_gist()
+            st.write("restore_db_from_gist():", ok, msg)
+
 # 2) Mixers
 with tabs[1]:
     st.subheader("Listado de Mixers")
