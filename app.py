@@ -300,53 +300,114 @@ conn = get_conn()
 c = conn.cursor()
 
 # ---------------------------------------------------
-# Crear tablas si no existen
+# Asegurar esquema (robusto ante conflictos previos)
 # ---------------------------------------------------
-c.execute("""
-CREATE TABLE IF NOT EXISTS parametros (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    nombre TEXT UNIQUE,
-    valor REAL
-)""")
+def _object_kind(conn, name):
+    row = conn.execute("SELECT type FROM sqlite_master WHERE name=?", (name,)).fetchone()
+    return row[0] if row else None  # "table" | "view" | "index" | None
 
-c.execute("""
-CREATE TABLE IF NOT EXISTS mixers (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    placa TEXT,
-    activo INTEGER,
-    habilitado INTEGER,
-    capacidad_m3 REAL,
-    tipo TEXT
-)""")
+def _table_cols(conn, table):
+    return [r[1] for r in conn.execute(f"PRAGMA table_info({table})").fetchall()]
 
-c.execute("""
-CREATE TABLE IF NOT EXISTS dosif (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    codigo TEXT,
-    habilitado INTEGER
-)""")
+def _has_col(conn, table, col):
+    return col in _table_cols(conn, table)
 
-c.execute("""
-CREATE TABLE IF NOT EXISTS agenda (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    cliente TEXT,
-    proyecto TEXT,
-    fecha TEXT,
-    hora_Q TEXT,
-    min_viaje_ida INTEGER,
-    volumen_m3 REAL,
-    requiere_bomba TEXT,
-    dosificadora TEXT,
-    mixer_id INTEGER,
-    hora_R TEXT,
-    hora_S TEXT,
-    hora_T TEXT,
-    hora_U TEXT,
-    hora_V TEXT,
-    hora_W TEXT,
-    hora_X TEXT
-)""")
-conn.commit()
+def ensure_schema(conn):
+    c = conn.cursor()
+
+    # 1) parametros (igual a tu código actual)
+    c.execute("""
+    CREATE TABLE IF NOT EXISTS parametros (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        nombre TEXT UNIQUE,
+        valor REAL
+    )""")
+
+    # 2) mixers (igual a tu código actual, y añadimos unidad_id si falta)
+    c.execute("""
+    CREATE TABLE IF NOT EXISTS mixers (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        placa TEXT,
+        activo INTEGER,
+        habilitado INTEGER,
+        capacidad_m3 REAL,
+        tipo TEXT
+    )""")
+    if not _has_col(conn, "mixers", "unidad_id"):
+        c.execute("ALTER TABLE mixers ADD COLUMN unidad_id TEXT")
+    # índice único (no falla si ya existe)
+    c.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_mixers_unidad ON mixers(unidad_id)")
+
+    # 3) dosif — si existe algo raro (vista/índice), lo rehacemos como tabla
+    kind = _object_kind(conn, "dosif")
+    if kind is None:
+        # crear limpio
+        c.execute("""
+        CREATE TABLE dosif (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            codigo TEXT,
+            habilitado INTEGER
+        )""")
+    elif kind == "table":
+        # asegurar columnas mínimas usadas por tu app
+        if not _has_col(conn, "dosif", "codigo"):
+            # estructura incompatible: renombrar y recrear
+            c.execute("ALTER TABLE dosif RENAME TO dosif_old")
+            c.execute("""
+            CREATE TABLE dosif (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                codigo TEXT,
+                habilitado INTEGER
+            )""")
+            # intentar copiar datos comunes si existen
+            old_cols = set(_table_cols(conn, "dosif_old"))
+            common = [cname for cname in ["id", "codigo", "habilitado"] if cname in old_cols]
+            if common:
+                cols = ",".join(common)
+                c.execute(f"INSERT INTO dosif ({cols}) SELECT {cols} FROM dosif_old")
+            c.execute("DROP TABLE dosif_old")
+        else:
+            if not _has_col(conn, "dosif", "habilitado"):
+                c.execute("ALTER TABLE dosif ADD COLUMN habilitado INTEGER")
+    else:
+        # era vista/índice u otro: eliminar y crear tabla correcta
+        if kind == "view":
+            c.execute("DROP VIEW dosif")
+        elif kind == "index":
+            c.execute("DROP INDEX dosif")
+        # crear tabla final
+        c.execute("""
+        CREATE TABLE IF NOT EXISTS dosif (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            codigo TEXT,
+            habilitado INTEGER
+        )""")
+
+    # 4) agenda — crea con TODAS las columnas que tu app usa hoy
+    c.execute("""
+    CREATE TABLE IF NOT EXISTS agenda (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        cliente TEXT,
+        proyecto TEXT,
+        fecha TEXT,               -- YYYY-MM-DD
+        hora_Q TEXT,              -- HH:MM
+        min_viaje_ida INTEGER,
+        volumen_m3 REAL,
+        requiere_bomba TEXT,
+        dosificadora TEXT,
+        dosif_codigo TEXT,
+        mixer_id INTEGER,
+
+        hora_R TEXT, hora_S TEXT, hora_T TEXT, hora_U TEXT, hora_V TEXT, hora_W TEXT, hora_X TEXT,
+        estado TEXT,
+        fecha_hora_q TEXT,
+        ciclo_total_min INTEGER,
+        min_viaje_regreso INTEGER
+    )""")
+
+    conn.commit()
+
+ensure_schema(conn)
 
 ok, msg = backup_db_to_gist()
 try:
