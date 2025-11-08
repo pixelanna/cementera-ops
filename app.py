@@ -975,13 +975,13 @@ with tabs[0]:
         if st.button("🔄 Recargar"):
             st.rerun()
 
-with st.expander("🛠️ Respaldo GitHub (debug)"):
-    exists = os.path.exists(DB_FILE)
-    size = os.path.getsize(DB_FILE) if exists else 0
-    st.write(f"DB local: `{DB_FILE}` existe = {exists}, tamaño = {size} bytes")
-    st.write("Secrets cargados:", bool(GITHUB_TOKEN), bool(GIST_ID), DB_FILE)
-
-    colA, colB, colC = st.columns(3)
+    with st.expander("🛠️ Respaldo GitHub (debug)"):
+        exists = os.path.exists(DB_FILE)
+        size = os.path.getsize(DB_FILE) if exists else 0
+        st.write(f"DB local: `{DB_FILE}` existe = {exists}, tamaño = {size} bytes")
+        st.write("Secrets cargados:", bool(GITHUB_TOKEN), bool(GIST_ID), DB_FILE)
+    
+        colA, colB, colC = st.columns(3)
     with colA:
         if st.button("🔎 Probar conexión a Gist"):
             try:
