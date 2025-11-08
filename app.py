@@ -3,6 +3,63 @@ import sqlite3
 import pandas as pd
 from datetime import datetime, timedelta
 import math
+import os, json, base64, requests
+
+# === Secrets desde Streamlit Cloud ===
+GIST_ID = st.secrets.get("GIST_ID")
+GITHUB_TOKEN = st.secrets.get("GITHUB_TOKEN")
+DB_FILE = st.secrets.get("DB_FILE", "cementera.db")
+
+def _gh_headers():
+    return {
+        "Authorization": f"token {GITHUB_TOKEN}",
+        "Accept": "application/vnd.github+json",
+    }
+
+def restore_db_from_gist():
+    """
+    Descarga cementera.db desde el Gist y lo escribe localmente.
+    Guardamos el archivo en el Gist como BASE64 (texto). Si alguna vez
+    quedó subido en binario crudo, también lo soporta (detecta y escribe).
+    """
+    if not (GIST_ID and GITHUB_TOKEN):
+        return False, "Faltan secrets (GIST_ID/GITHUB_TOKEN)"
+    try:
+        g = requests.get(f"https://api.github.com/gists/{GIST_ID}", headers=_gh_headers(), timeout=20)
+        g.raise_for_status()
+        files = g.json().get("files", {})
+        meta = files.get(DB_FILE)
+        if not meta or not meta.get("raw_url"):
+            return False, "Archivo aún no existe en el Gist (primer backup lo creará)"
+        r = requests.get(meta["raw_url"], timeout=30)
+        r.raise_for_status()
+        raw = r.content  # bytes; puede ser base64 (texto) o binario
+        try:
+            blob = base64.b64decode(raw)  # si es base64, decodifica a binario
+        except Exception:
+            blob = raw  # ya es binario
+        with open(DB_FILE, "wb") as f:
+            f.write(blob)
+        return True, "Restaurado desde Gist"
+    except Exception as e:
+        return False, f"Error al restaurar: {e}"
+
+def backup_db_to_gist():
+    """
+    Sube/actualiza cementera.db al Gist como BASE64 (seguro y simple).
+    """
+    if not (GIST_ID and GITHUB_TOKEN):
+        return False, "Faltan secrets (GIST_ID/GITHUB_TOKEN)"
+    try:
+        with open(DB_FILE, "rb") as f:
+            b64 = base64.b64encode(f.read()).decode("utf-8")
+        payload = {"files": {DB_FILE: {"content": b64}}}
+        r = requests.patch(f"https://api.github.com/gists/{GIST_ID}",
+                           headers=_gh_headers(), data=json.dumps(payload), timeout=30)
+        r.raise_for_status()
+        return True, "Respaldado en Gist"
+    except Exception as e:
+        return False, f"Error al respaldar: {e}"
 
 st.set_page_config(page_title="Cementera OPS", layout="wide")
 st.title("🚧 Constructora ETERNA | División CONETSA - Plantel Olímpico - v0.1")
