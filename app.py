@@ -802,49 +802,81 @@ def upsert_mixer_by_unidad(conn, unidad_id, placa, capacidad_m3, tipo, habilitad
 # ---------------------------------------------------
 # Seed de datos si faltan
 # ---------------------------------------------------
-def seed_data():
-    # Mixers
-    c.execute("SELECT COUNT(*) FROM mixers")
-    if c.fetchone()[0] == 0:
-        mixers = []
-        # 2 SANNY 10 m3
-        for i in range(1, 3):
-            mixers.append((f"SANNY-{str(i).zfill(2)}", 1, 1, 10.0, "SANNY"))
-        # 12 STD 8.5 m3
-        for i in range(3, 15):
-            mixers.append((f"STD-{str(i).zfill(2)}", 1, 1, 8.5, "STD"))
-        c.executemany(
-            "INSERT INTO mixers (placa, activo, habilitado, capacidad_m3, tipo) VALUES (?, ?, ?, ?, ?)",
-            mixers
+def seed_data(conn):
+    """
+    Inserta valores iniciales SOLO si las tablas están vacías.
+    Usa SIEMPRE un cursor local y asume que ensure_schema(conn) ya corrió.
+    """
+    cur = conn.cursor()
+
+    # --- parametros por defecto (solo si está vacío)
+    try:
+        n = cur.execute("SELECT COUNT(*) FROM parametros").fetchone()[0]
+    except sqlite3.Error:
+        n = 0
+    if n == 0:
+        cur.executemany(
+            "INSERT OR IGNORE INTO parametros (nombre, valor) VALUES (?,?)",
+            [
+                ("Fecha_inicio", "2025-12-01"),
+                ("Dias_planificados", "7"),
+                ("Intervalo_min", "15"),
+                ("Capacidad_mixer_m3", "8.5"),
+                ("Tiempo_carga_min", "11"),
+                ("Tiempo_descarga_min", "20"),
+                ("Margen_lavado_min", "5"),
+                ("Bombas_disponibles", "3"),
+                ("Dosificadoras_en_planta", "2"),
+                ("Tiempo_cambio_obra_min", "4"),
+                ("Mixers_SANNY", "2"),
+                ("Capacidad_SANNY_m3", "10"),
+            ],
         )
 
-    # Dosificadoras
-    c.execute("SELECT COUNT(*) FROM dosif")
-    if c.fetchone()[0] == 0:
-        c.executemany(
-            "INSERT INTO dosif (codigo, habilitado) VALUES (?, ?)",
+    # --- dosificadoras por defecto (solo si está vacío)
+    try:
+        n = cur.execute("SELECT COUNT(*) FROM dosif").fetchone()[0]
+    except sqlite3.Error:
+        n = 0
+    if n == 0:
+        cur.executemany(
+            "INSERT OR IGNORE INTO dosif (codigo, habilitado) VALUES (?,?)",
             [("DF-01", 1), ("DF-06", 1)]
         )
 
-    # Parámetros base (según tu Excel)
-    # Nota: SQLite permite guardar texto en una columna REAL sin romperse (tipado dinámico),
-    # así que dejamos la columna como está y guardamos la fecha como 'YYYY-MM-DD'.
-    base_params = {
-        "Fecha_inicio": "2025-11-03",          # tu 11/3/2025 interpretado como 3-Nov-2025
-        "Dias_planificados": 7,
-        "Intervalo_min": 15,
-        "Capacidad_mixer_m3": 8.5,
-        "Tiempo_carga_min": 11,                # base para 8.5 m³
-        "Tiempo_descarga_min": 20,
-        "Margen_lavado_min": 5,
-        "Bombas_disponibles": 3,
-        "Dosificadoras_en_planta": 2,
-        "Tiempo_cambio_obra_min": 4,
-        "Mixers_SANNY": 2,
-        "Capacidad_SANNY_m3": 10,
-    }
-    for k, v in base_params.items():
-        c.execute("INSERT OR IGNORE INTO parametros (nombre, valor) VALUES (?, ?)", (k, v))
+    # --- mixers por defecto (solo si está vacío)
+    try:
+        n = cur.execute("SELECT COUNT(*) FROM mixers").fetchone()[0]
+    except sqlite3.Error:
+        n = 0
+    if n == 0:
+        # 14 mixers: 2 SANY 10 m³, resto STD 8.5 m³
+        seed_mixers = [
+            # unidad_id, placa, habilitado, capacidad_m3, tipo
+            ("218 25", "HAA1234", 1, 10.0, "SANY"),
+            ("218 27", "HAA2345", 1, 10.0, "SANY"),
+            ("MX 25", "HAA3456", 1, 8.5, "STD"),
+            ("MX 29", "HAA4567", 1, 8.5, "STD"),
+            ("MX 30", "HAA5678", 1, 8.5, "STD"),
+            ("MX 31", "HAA6789", 1, 8.5, "STD"),
+            ("MX 32", "HAA7890", 1, 8.5, "STD"),
+            ("MX 33", "HAA8901", 1, 8.5, "STD"),
+            ("MX 34", "HAA9012", 1, 8.5, "STD"),
+            ("MX 35", "HAA0123", 1, 8.5, "STD"),
+            ("218 16", "HAA2123", 1, 8.5, "STD"),
+            ("218 01", "HAA3123", 1, 8.5, "STD"),
+            ("TEA 1249", "HAA4123", 1, 8.5, "STD"),
+            ("TEA 1250", "HAA4124", 1, 8.5, "STD"),
+        ]
+        # Asegura columnas esperadas; 'activo' no lo usamos ya (si existe, lo dejamos en NULL)
+        for u, placa, hab, cap, tipo in seed_mixers:
+            cur.execute(
+                """
+                INSERT OR IGNORE INTO mixers (unidad_id, placa, habilitado, capacidad_m3, tipo)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (u, placa, hab, cap, tipo),
+            )
 
     conn.commit()
 
