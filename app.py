@@ -94,6 +94,190 @@ def backup_db_to_gist():
     except Exception as e:
         return False, f"Error al respaldar: {e}"
 
+from datetime import datetime, timedelta
+import pandas as pd
+
+# --- Si no lo tienes: leer parámetro con default
+def get_param(conn, name, default):
+    try:
+        val = pd.read_sql(
+            "SELECT valor FROM parametros WHERE lower(nombre)=lower(?)", conn, params=(name,)
+        ).iloc[0, 0]
+        return float(str(val).replace(",", "."))
+    except Exception:
+        return float(default)
+
+# --- Si no lo tienes: verificador de solapes (usa columnas hora_S, hora_T, hora_X)
+def _dt(fecha_yyyy_mm_dd: str, hhmm: str) -> datetime:
+    return datetime.strptime(f"{fecha_yyyy_mm_dd} {hhmm}", "%Y-%m-%d %H:%M")
+
+def _overlap(a0: datetime, a1: datetime, b0: datetime, b1: datetime) -> bool:
+    return max(a0, b0) < min(a1, b1)
+
+def check_conflicts(conn, fecha_str: str, mixer_id: int, dosif_codigo: str,
+                    S: datetime, T: datetime, X: datetime, exclude_agenda_id=None):
+    cur = conn.cursor()
+
+    # Mixer: [S..X]
+    if exclude_agenda_id is None:
+        cur.execute("""SELECT id, proyecto, hora_S, hora_X
+                       FROM agenda WHERE fecha=? AND mixer_id=?""",
+                    (fecha_str, int(mixer_id)))
+    else:
+        cur.execute("""SELECT id, proyecto, hora_S, hora_X
+                       FROM agenda WHERE fecha=? AND mixer_id=? AND id<>?""",
+                    (fecha_str, int(mixer_id), int(exclude_agenda_id)))
+    conf_mixer = []
+    for aid, proy, s2, x2 in cur.fetchall():
+        try:
+            S2, X2 = _dt(fecha_str, s2), _dt(fecha_str, x2)
+            if _overlap(S, X, S2, X2):
+                conf_mixer.append(f"#{aid} {proy} [S:{s2}→X:{x2}]")
+        except:
+            pass
+
+    # Dosif: [S..T]
+    conf_dosif = []
+    if dosif_codigo:
+        if exclude_agenda_id is None:
+            cur.execute("""SELECT id, proyecto, hora_S, hora_T
+                           FROM agenda WHERE fecha=? AND dosif_codigo=?""",
+                        (fecha_str, dosif_codigo))
+        else:
+            cur.execute("""SELECT id, proyecto, hora_S, hora_T
+                           FROM agenda WHERE fecha=? AND dosif_codigo=? AND id<>?""",
+                        (fecha_str, dosif_codigo, int(exclude_agenda_id)))
+        for aid, proy, s2, t2 in cur.fetchall():
+            try:
+                S2, T2 = _dt(fecha_str, s2), _dt(fecha_str, t2)
+                if _overlap(S, T, S2, T2):
+                    conf_dosif.append(f"#{aid} {proy} [S:{s2}→T:{t2}]")
+            except:
+                pass
+
+    return conf_mixer, conf_dosif
+
+# --- Dosificadoras habilitadas
+def dosif_habilitadas(conn):
+    df = pd.read_sql("SELECT codigo FROM dosif WHERE habilitado=1 ORDER BY codigo", conn)
+    return df["codigo"].tolist()
+
+# --- SOLO mixers STD habilitados (excluye SANY) para el auto
+def mixers_auto_std(conn):
+    df = pd.read_sql("""SELECT id, unidad_id, placa, capacidad_m3, tipo, habilitado
+                        FROM mixers WHERE habilitado=1 ORDER BY capacidad_m3 DESC, id""", conn)
+    df = df[df["tipo"].astype(str).str.upper() != "SANY"]  # excluir SANY
+    return [dict(row) for _, row in df.iterrows()]
+
+# --- Buscar una combinación factible (mixer STD + dosif + Q) moviendo Q si hay choques
+def asignar_viaje_factible(conn, fecha_sel: str, Q_str: str, volumen_m3: float,
+                           min_ida: int, tiempo_descarga_min: int,
+                           margen_lavado_min: int, tiempo_cambio_obra_min: int):
+    intervalo_min = int(get_param(conn, "Intervalo_min", 15))
+    mixers = mixers_auto_std(conn)
+    dosifs = dosif_habilitadas(conn)
+    if not mixers or not dosifs:
+        return None
+
+    Q_dt = datetime.strptime(f"{fecha_sel} {Q_str}", "%Y-%m-%d %H:%M")
+    intentos = 0
+    while intentos < 8*24:  # tope razonable
+        for m in mixers:
+            mid = int(m["id"])
+            cap = float(m["capacidad_m3"])
+            vol = min(float(volumen_m3), cap)
+
+            # calcular_tiempos: ya la tienes (Q -> R,S,T,U,V,W,X)
+            R, S, T, U, V, W, X = calcular_tiempos(
+                Q_dt.strftime("%H:%M"), int(min_ida), float(vol),
+                int(tiempo_descarga_min), int(margen_lavado_min), int(tiempo_cambio_obra_min)
+            )
+            S_dt = _dt(fecha_sel, S.strftime("%H:%M"))
+            T_dt = _dt(fecha_sel, T.strftime("%H:%M"))
+            X_dt = _dt(fecha_sel, X.strftime("%H:%M"))
+
+            for dcode in dosifs:
+                conf_mx, conf_df = check_conflicts(conn, fecha_sel, mid, dcode, S_dt, T_dt, X_dt, None)
+                if not conf_mx and not conf_df:
+                    return {
+                        "mixer_id": mid, "dosif": dcode, "volumen_m3": vol,
+                        "Q": Q_dt, "R": R, "S": S, "T": T, "U": U, "V": V, "W": W, "X": X
+                    }
+
+        Q_dt = Q_dt + timedelta(minutes=intervalo_min)
+        intentos += 1
+
+    return None
+
+# --- Planificador por volumen total (solo STD). SANY queda para edición manual.
+def planificar_proyecto_auto(conn, cliente: str, proyecto: str, fecha_sel: str,
+                             hora_Q_ini: str, volumen_total: float,
+                             min_ida: int, tiempo_descarga_min: int,
+                             requiere_bomba: str):
+    margen_lavado_min      = int(get_param(conn, "Margen_lavado_min", 5))
+    tiempo_cambio_obra_min = int(get_param(conn, "Tiempo_cambio_obra_min", 4))
+
+    # Avisar si no hay STD
+    if len(mixers_auto_std(conn)) == 0:
+        raise ValueError("No hay mixers STD habilitados. Usa el editor para asignar SANY manualmente.")
+
+    creado = []
+    restante = float(volumen_total)
+    Q_actual = datetime.strptime(f"{fecha_sel} {hora_Q_ini}", "%Y-%m-%d %H:%M")
+
+    while restante > 0.001:
+        asign = asignar_viaje_factible(
+            conn, fecha_sel, Q_actual.strftime("%H:%M"),
+            restante, min_ida, tiempo_descarga_min, margen_lavado_min, tiempo_cambio_obra_min
+        )
+        if asign is None:
+            raise ValueError("No se encontró disponibilidad (mixers/dosif ocupados).")
+
+        vol = float(asign["volumen_m3"])
+        fecha_hora_q = f"{fecha_sel} {asign['Q'].strftime('%H:%M')}"
+        ciclo_total_min   = int((asign["X"] - asign["S"]).total_seconds() // 60)
+        min_viaje_regreso = int(min_ida)
+
+        cur = conn.cursor()
+        cur.execute("""
+            INSERT INTO agenda (
+                cliente, proyecto, fecha, hora_Q, min_viaje_ida, volumen_m3, estado,
+                requiere_bomba, dosificadora, dosif_codigo, mixer_id,
+                hora_R, hora_S, hora_T, hora_U, hora_V, hora_W, hora_X,
+                fecha_hora_q, ciclo_total_min, min_viaje_regreso
+            ) VALUES (?, ?, ?, ?, ?, ?, 'Programado', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (
+            cliente, proyecto, fecha_sel, asign["Q"].strftime("%H:%M"), int(min_ida), vol,
+            requiere_bomba, asign["dosif"], asign["dosif"], int(asign["mixer_id"]),
+            asign["R"].strftime("%H:%M"), asign["S"].strftime("%H:%M"), asign["T"].strftime("%H:%M"),
+            asign["U"].strftime("%H:%M"), asign["V"].strftime("%H:%M"), asign["W"].strftime("%H:%M"), asign["X"].strftime("%H:%M"),
+            fecha_hora_q, ciclo_total_min, min_viaje_regreso
+        ))
+        conn.commit()
+        try:
+            ok, msg = backup_db_to_gist()
+            try: st.toast("✅ Respaldo OK en GitHub" if ok else f"⚠️ "+msg)
+            except: pass
+        except: pass
+
+        creado.append({
+            "Mixer_ID": int(asign["mixer_id"]),
+            "Dosif": asign["dosif"],
+            "m3": vol,
+            "Q_llega": asign["Q"].strftime("%H:%M"),
+            "R_sale": asign["R"].strftime("%H:%M"),
+            "S_ini_carga": asign["S"].strftime("%H:%M"),
+            "T_fin_carga": asign["T"].strftime("%H:%M"),
+            "U_fin_desc": asign["U"].strftime("%H:%M"),
+            "X_fin_total": asign["X"].strftime("%H:%M"),
+        })
+
+        # siguiente llegada a obra espaciada por tiempo de descarga
+        Q_actual = Q_actual + timedelta(minutes=int(tiempo_descarga_min))
+        restante = max(0.0, restante - vol)
+
+    return pd.DataFrame(creado)
+
 st.set_page_config(page_title="Cementera OPS", layout="wide")
 st.title("🚧 Constructora ETERNA | División CONETSA - Plantel Olímpico - v0.1")
 
@@ -744,7 +928,40 @@ with tabs[2]:
     with col3:
         requiere_bomba = st.selectbox("¿Requiere bomba?", ["NO", "YES"])
         dosificadora = st.selectbox("Dosificadora", ["DF-01", "DF-06"])
-    
+
+st.markdown("## 🏗️ Nuevo Proyecto — Automático (solo STD)")
+with st.form("form_proj_auto_std", clear_on_submit=False):
+    cliente_a   = st.text_input("Cliente", value="")
+    proyecto_a  = st.text_input("Proyecto", value="")
+    fecha_a     = st.date_input("Fecha", value=datetime.now()).strftime("%Y-%m-%d")
+    hora_Q_a    = st.text_input("Hora en obra (HH:MM)", value="08:00")
+    vol_total_a = st.number_input("Volumen total (m³)", min_value=1.0, step=0.5, value=83.0)
+    min_ida_a   = st.number_input("Minutos viaje ida", min_value=0, max_value=300, value=25)
+    tdesc_a     = st.number_input("Tiempo de descarga (min)", min_value=5, max_value=120, value=20)
+    req_bomba_a = st.selectbox("¿Requiere bomba?", ["NO", "YES"], index=0)
+    submitted   = st.form_submit_button("🚀 Planificar y guardar (STD)")
+
+if submitted:
+    try:
+        df_res = planificar_proyecto_auto(
+            conn,
+            cliente=cliente_a.strip(),
+            proyecto=proyecto_a.strip(),
+            fecha_sel=fecha_a,
+            hora_Q_ini=hora_Q_a.strip(),
+            volumen_total=float(vol_total_a),
+            min_ida=int(min_ida_a),
+            tiempo_descarga_min=int(tdesc_a),
+            requiere_bomba=req_bomba_a
+        )
+        st.success(f"✅ Proyecto planificado: {len(df_res)} viaje(s) creados (solo STD).")
+        try:
+            st.dataframe(df_res, use_container_width=True, hide_index=True)
+        except TypeError:
+            st.dataframe(df_res.style.hide(axis="index"), use_container_width=True)
+    except Exception as e:
+        st.error(f"❌ No se pudo planificar: {e}")
+        
         # --- Cargar Mixers habilitados desde BD ---
         df_mix = pd.read_sql("SELECT id, unidad_id, placa, tipo, capacidad_m3, habilitado FROM mixers ORDER BY id", conn)
         if df_mix.empty:
