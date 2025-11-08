@@ -64,6 +64,12 @@ def backup_db_to_gist():
 st.set_page_config(page_title="Cementera OPS", layout="wide")
 st.title("🚧 Constructora ETERNA | División CONETSA - Plantel Olímpico - v0.1")
 
+# === Restaurar DB antes de abrir conexión ===
+_ = restore_db_from_gist()
+
+conn = sqlite3.connect(DB_FILE, check_same_thread=False)
+c = conn.cursor()
+
 # ---------------------------------------------------
 # Conexión a SQLite (cacheada para Streamlit Cloud)
 # ---------------------------------------------------
