@@ -1006,16 +1006,16 @@ with st.expander("🛠️ Respaldo GitHub (debug)"):
             ok, msg = restore_db_from_gist()
             st.write("restore_db_from_gist():", ok, msg)
 
-    with st.expander("🧹 Reparación avanzada (si ves errores de esquema)"):
-    cA, cB = st.columns(2)
-    with cA:
-        if st.button("❌ Eliminar DB del Gist (solo si está corrupta)"):
-            ok, msg = delete_db_in_gist()
-            st.write("delete_db_in_gist():", ok, msg)
-    with cB:
-        if st.button("⬆️ Subir DB local (limpia) al Gist"):
-            ok, msg = backup_db_to_gist()
-            st.write("backup_db_to_gist():", ok, msg)
+        with st.expander("🧹 Reparación avanzada (si ves errores de esquema)"):
+        cA, cB = st.columns(2)
+        with cA:
+            if st.button("❌ Eliminar DB del Gist (solo si está corrupta)"):
+                ok, msg = delete_db_in_gist()
+                st.write("delete_db_in_gist():", ok, msg)
+        with cB:
+            if st.button("⬆️ Subir DB local (limpia) al Gist"):
+                ok, msg = backup_db_to_gist()
+                st.write("backup_db_to_gist():", ok, msg)
 
 # 2) Mixers
 with tabs[1]:
