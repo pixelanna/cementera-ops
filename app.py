@@ -5,6 +5,48 @@ from datetime import datetime, timedelta
 import math
 import os, json, base64, requests
 
+# ==== Helpers de integridad y reparación de DB ====
+import time, shutil
+
+def _sqlite_integrity_ok(conn):
+    try:
+        row = conn.execute("PRAGMA integrity_check;").fetchone()
+        return bool(row) and str(row[0]).strip().lower() == "ok"
+    except Exception:
+        return False
+
+def rebuild_empty_db(db_path, conn):
+    """Cierra conexión, renombra DB dañada y crea una nueva vacía."""
+    try:
+        conn.close()
+    except Exception:
+        pass
+    ts = time.strftime("%Y%m%d-%H%M%S")
+    try:
+        shutil.move(db_path, f"{db_path}.bad.{ts}")
+    except Exception:
+        pass
+    new_conn = sqlite3.connect(db_path, check_same_thread=False)
+    return new_conn
+
+# (Opcional) borrar la DB del Gist para romper ciclos con un archivo corrupto.
+def delete_db_in_gist():
+    if not (GIST_ID and GITHUB_TOKEN):
+        return False, "Faltan secrets (GIST_ID/GITHUB_TOKEN)"
+    try:
+        payload = {"files": {DB_FILE: None}}
+        r = requests.patch(
+            f"https://api.github.com/gists/{GIST_ID}",
+            headers=_gh_headers(),
+            data=json.dumps(payload),
+            timeout=30
+        )
+        if r.status_code in (200, 201):
+            return True, "Archivo eliminado del Gist"
+        return False, f"{r.status_code}: {r.text}"
+    except Exception as e:
+        return False, f"Error al eliminar en Gist: {e}"
+
 # === Secrets desde Streamlit Cloud ===
 GIST_ID = st.secrets.get("GIST_ID")
 GITHUB_TOKEN = st.secrets.get("GITHUB_TOKEN")
