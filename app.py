@@ -323,11 +323,24 @@ def planificar_proyecto_auto(conn, cliente: str, proyecto: str, fecha_sel: str,
 st.set_page_config(page_title="Cementera OPS", layout="wide")
 st.title("🚧 Constructora ETERNA | División CONETSA - Plantel Olímpico - v0.1")
 
-# === Restaurar DB antes de abrir conexión ===
+# Restaurar desde Gist si aplica
 _ = restore_db_from_gist()
 
+# Abrir conexión
 conn = sqlite3.connect(DB_FILE, check_same_thread=False)
 c = conn.cursor()
+
+# Integridad + esquema robusto (como ya pegamos)
+try:
+    if not _sqlite_integrity_ok(conn):
+        conn = rebuild_empty_db(DB_FILE, conn)
+    ensure_schema(conn)
+except sqlite3.DatabaseError:
+    conn = rebuild_empty_db(DB_FILE, conn)
+    ensure_schema(conn)
+
+# >>> LLAMAR AQUÍ <<<
+seed_data(conn)
 
 # ---------------------------------------------------
 # Conexión a SQLite (cacheada para Streamlit Cloud)
