@@ -46,7 +46,8 @@ def restore_db_from_gist():
 
 def backup_db_to_gist():
     """
-    Sube/actualiza cementera.db al Gist como BASE64 (seguro y simple).
+    Sube/actualiza cementera.db al Gist como BASE64.
+    Si hay error 409 (Conflict), elimina el archivo y reintenta.
     """
     if not (GIST_ID and GITHUB_TOKEN):
         return False, "Faltan secrets (GIST_ID/GITHUB_TOKEN)"
@@ -54,10 +55,42 @@ def backup_db_to_gist():
         with open(DB_FILE, "rb") as f:
             b64 = base64.b64encode(f.read()).decode("utf-8")
         payload = {"files": {DB_FILE: {"content": b64}}}
-        r = requests.patch(f"https://api.github.com/gists/{GIST_ID}",
-                           headers=_gh_headers(), data=json.dumps(payload), timeout=30)
-        r.raise_for_status()
-        return True, "Respaldado en Gist"
+
+        # Primer intento
+        r = requests.patch(
+            f"https://api.github.com/gists/{GIST_ID}",
+            headers=_gh_headers(),
+            data=json.dumps(payload),
+            timeout=30
+        )
+
+        # Si funcionó, genial
+        if r.status_code == 200:
+            return True, "Respaldado en Gist"
+
+        # Si hay conflicto 409, borramos el archivo y subimos de nuevo
+        if r.status_code == 409:
+            del_payload = {"files": {DB_FILE: None}}
+            requests.patch(
+                f"https://api.github.com/gists/{GIST_ID}",
+                headers=_gh_headers(),
+                data=json.dumps(del_payload),
+                timeout=30
+            )
+            r2 = requests.patch(
+                f"https://api.github.com/gists/{GIST_ID}",
+                headers=_gh_headers(),
+                data=json.dumps(payload),
+                timeout=30
+            )
+            if r2.status_code == 200:
+                return True, "Respaldado en Gist tras resolver 409"
+            else:
+                return False, f"409 persistente ({r2.status_code})"
+
+        # Cualquier otro error
+        return False, f"{r.status_code}: {r.text}"
+
     except Exception as e:
         return False, f"Error al respaldar: {e}"
 
