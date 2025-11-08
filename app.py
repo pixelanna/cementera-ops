@@ -198,7 +198,7 @@ def get_param(conn, name: str, default=None):
         cur.execute("INSERT INTO parametros (nombre, valor) VALUES (?, ?)", (name, default))
         conn.commit()
 
-            ok, msg = backup_db_to_gist()
+        ok, msg = backup_db_to_gist()
         try:
             st.toast("✅ Respaldo OK en GitHub" if ok else f"⚠️ {msg}")
         except Exception:
@@ -223,11 +223,11 @@ def ensure_required_params(conn):
         cur.execute("INSERT OR IGNORE INTO parametros (nombre, valor) VALUES (?, ?)", (k, v))
     conn.commit()
 
-ok, msg = backup_db_to_gist()
-try:
-    st.toast("✅ Respaldo OK en GitHub" if ok else f"⚠️ {msg}")
-except Exception:
-    pass
+    ok, msg = backup_db_to_gist()
+    try:
+        st.toast("✅ Respaldo OK en GitHub" if ok else f"⚠️ {msg}")
+    except Exception:
+        pass
 
 from datetime import time
 
@@ -302,11 +302,11 @@ def ensure_col(table, coldef):
         cur.execute(f"ALTER TABLE {table} ADD COLUMN {coldef}")
         conn.commit()
 
-ok, msg = backup_db_to_gist()
-try:
-    st.toast("✅ Respaldo OK en GitHub" if ok else f"⚠️ {msg}")
-except Exception:
-    pass
+        ok, msg = backup_db_to_gist()
+        try:
+            st.toast("✅ Respaldo OK en GitHub" if ok else f"⚠️ {msg}")
+        except Exception:
+            pass
 
 # Estado y trazas útiles (texto/num) — evita romper lo existente
 ensure_col("agenda", "estado TEXT")
@@ -325,11 +325,11 @@ def upsert_param(conn, nombre, valor):
     """, (nombre, valor))
     conn.commit()
 
-ok, msg = backup_db_to_gist()
-try:
-    st.toast("✅ Respaldo OK en GitHub" if ok else f"⚠️ {msg}")
-except Exception:
-    pass
+    ok, msg = backup_db_to_gist()
+    try:
+        st.toast("✅ Respaldo OK en GitHub" if ok else f"⚠️ {msg}")
+    except Exception:
+        pass
 
 def upsert_mixer_by_unidad(conn, unidad_id, placa, capacidad_m3, tipo, habilitado=1):
     cur = conn.cursor()
@@ -350,11 +350,11 @@ def upsert_mixer_by_unidad(conn, unidad_id, placa, capacidad_m3, tipo, habilitad
         )
     conn.commit()
 
-ok, msg = backup_db_to_gist()
-try:
-    st.toast("✅ Respaldo OK en GitHub" if ok else f"⚠️ {msg}")
-except Exception:
-    pass
+    ok, msg = backup_db_to_gist()
+    try:
+        st.toast("✅ Respaldo OK en GitHub" if ok else f"⚠️ {msg}")
+    except Exception:
+        pass
 
 # ---------------------------------------------------
 # Seed de datos si faltan
@@ -405,11 +405,11 @@ def seed_data():
 
     conn.commit()
 
-ok, msg = backup_db_to_gist()
-try:
-    st.toast("✅ Respaldo OK en GitHub" if ok else f"⚠️ {msg}")
-except Exception:
-    pass
+    ok, msg = backup_db_to_gist()
+    try:
+        st.toast("✅ Respaldo OK en GitHub" if ok else f"⚠️ {msg}")
+    except Exception:
+        pass
 
 seed_data()
 ensure_required_params(conn)
@@ -519,10 +519,10 @@ with tabs[0]:
             conn.commit()
 
             ok, msg = backup_db_to_gist()
-try:
-    st.toast("✅ Respaldo OK en GitHub" if ok else f"⚠️ {msg}")
-except Exception:
-    pass
+            try:
+                st.toast("✅ Respaldo OK en GitHub" if ok else f"⚠️ {msg}")
+            except Exception:
+                pass
             
             # (si usas respaldo a Gist, descomenta la siguiente línea)
             # backup_db_to_gist()
@@ -575,20 +575,20 @@ with tabs[1]:
         cur.execute("ALTER TABLE mixers ADD COLUMN unidad_id TEXT")
         conn.commit()
 
-ok, msg = backup_db_to_gist()
-try:
-    st.toast("✅ Respaldo OK en GitHub" if ok else f"⚠️ {msg}")
-except Exception:
-    pass
+        ok, msg = backup_db_to_gist()
+        try:
+            st.toast("✅ Respaldo OK en GitHub" if ok else f"⚠️ {msg}")
+        except Exception:
+            pass
 
     cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_mixers_unidad ON mixers(unidad_id)")
     conn.commit()
 
-ok, msg = backup_db_to_gist()
-try:
-    st.toast("✅ Respaldo OK en GitHub" if ok else f"⚠️ {msg}")
-except Exception:
-    pass
+    ok, msg = backup_db_to_gist()
+    try:
+        st.toast("✅ Respaldo OK en GitHub" if ok else f"⚠️ {msg}")
+    except Exception:
+        pass
 
     # --- Leer datos base (sin 'activo'; no lo usamos más)
     dfm = pd.read_sql("""
@@ -653,10 +653,10 @@ except Exception:
                 conn.commit()
 
                 ok, msg = backup_db_to_gist()
-try:
-    st.toast("✅ Respaldo OK en GitHub" if ok else f"⚠️ {msg}")
-except Exception:
-    pass
+                try:
+                    st.toast("✅ Respaldo OK en GitHub" if ok else f"⚠️ {msg}")
+                except Exception:
+                    pass
                 
                 st.success(f"Mixer {'habilitado' if nuevo==1 else 'deshabilitado'}.")
                 st.rerun()
@@ -687,11 +687,11 @@ except Exception:
                     cur.execute("DELETE FROM mixers WHERE id=?", (mixer_id_del,))
                     conn.commit()
 
-ok, msg = backup_db_to_gist()
-try:
-    st.toast("✅ Respaldo OK en GitHub" if ok else f"⚠️ {msg}")
-except Exception:
-    pass
+                    ok, msg = backup_db_to_gist()
+                    try:
+                        st.toast("✅ Respaldo OK en GitHub" if ok else f"⚠️ {msg}")
+                    except Exception:
+                        pass
                     
                     st.success("Mixer eliminado.")
                     st.rerun()
@@ -790,10 +790,10 @@ with tabs[2]:
         conn.commit()
 
         ok, msg = backup_db_to_gist()
-try:
-    st.toast("✅ Respaldo OK en GitHub" if ok else f"⚠️ {msg}")
-except Exception:
-    pass
+        try:
+            st.toast("✅ Respaldo OK en GitHub" if ok else f"⚠️ {msg}")
+        except Exception:
+            pass
         
         st.success("✅ Viaje guardado correctamente")
 
@@ -1064,11 +1064,11 @@ with tabs[3]:
                     cur.execute("DELETE FROM agenda WHERE id=?", (int(agenda_id),))
                     conn.commit()
 
-ok, msg = backup_db_to_gist()
-try:
-    st.toast("✅ Respaldo OK en GitHub" if ok else f"⚠️ {msg}")
-except Exception:
-    pass
+                    ok, msg = backup_db_to_gist()
+                    try:
+                        st.toast("✅ Respaldo OK en GitHub" if ok else f"⚠️ {msg}")
+                    except Exception:
+                        pass
                     
                     st.success("Viaje eliminado.")
                     st.rerun()
