@@ -1540,13 +1540,13 @@ with tabs[3]:
     st.markdown("---")
     
         # --- Agenda por mixer (slots 15')
-st.markdown("### 🚛 Agenda por Mixer (15 min)")
+    st.markdown("### 🚛 Agenda por Mixer (15 min)")
 
-# 1) Cargar mixers
-df_mix_all = pd.read_sql(
-    "SELECT id, unidad_id, placa, habilitado FROM mixers ORDER BY id",
-    conn
-)
+    # 1) Cargar mixers
+    df_mix_all = pd.read_sql(
+        "SELECT id, unidad_id, placa, habilitado FROM mixers ORDER BY id",
+        conn
+    )
 
 # 2) Guardas si no hay mixers
 if df_mix_all.empty:
