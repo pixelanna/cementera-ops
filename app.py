@@ -8,6 +8,199 @@ import os, json, base64, requests
 # ==== Helpers de integridad y reparación de DB ====
 import time, shutil
 
+# ====== SCHEMA HELPERS + ensure_schema (defínelos antes de usarlos) ======
+def _object_kind(conn, name: str):
+    row = conn.execute("SELECT type FROM sqlite_master WHERE name=?", (name,)).fetchone()
+    return row[0] if row else None  # "table" | "view" | "index" | None
+
+def _table_cols(conn, table: str):
+    try:
+        return [r[1] for r in conn.execute(f"PRAGMA table_info({table})").fetchall()]
+    except Exception:
+        return []
+
+def _has_col(conn, table: str, col: str) -> bool:
+    return col in _table_cols(conn, table)
+
+def _safe_add_col(conn, table: str, coldef: str):
+    colname = coldef.split()[0]
+    if not _has_col(conn, table, colname):
+        conn.execute(f"ALTER TABLE {table} ADD COLUMN {coldef}")
+
+def ensure_schema(conn):
+    c = conn.cursor()
+
+    # ---- parametros ----
+    kind = _object_kind(conn, "parametros")
+    if kind is None:
+        c.execute("""
+        CREATE TABLE parametros (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            nombre TEXT UNIQUE,
+            valor TEXT
+        )""")
+    elif kind == "table":
+        if "nombre" not in _table_cols(conn, "parametros"):
+            c.execute("ALTER TABLE parametros RENAME TO parametros_old")
+            c.execute("""
+            CREATE TABLE parametros (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                nombre TEXT UNIQUE,
+                valor TEXT
+            )""")
+            old = set(_table_cols(conn, "parametros_old"))
+            common = [x for x in ["id","nombre","valor"] if x in old]
+            if common:
+                cols = ",".join(common)
+                c.execute(f"INSERT OR IGNORE INTO parametros ({cols}) SELECT {cols} FROM parametros_old")
+            c.execute("DROP TABLE parametros_old")
+        else:
+            _safe_add_col(conn, "parametros", "valor TEXT")
+    else:
+        if kind == "view":
+            c.execute("DROP VIEW parametros")
+        elif kind == "index":
+            c.execute("DROP INDEX parametros")
+        c.execute("""
+        CREATE TABLE IF NOT EXISTS parametros (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            nombre TEXT UNIQUE,
+            valor TEXT
+        )""")
+
+    # ---- mixers ----
+    kind = _object_kind(conn, "mixers")
+    if kind is None:
+        c.execute("""
+        CREATE TABLE mixers (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            placa TEXT,
+            activo INTEGER,
+            habilitado INTEGER,
+            capacidad_m3 REAL,
+            tipo TEXT,
+            unidad_id TEXT
+        )""")
+    elif kind == "table":
+        for coldef in [
+            "placa TEXT","activo INTEGER","habilitado INTEGER",
+            "capacidad_m3 REAL","tipo TEXT","unidad_id TEXT"
+        ]:
+            _safe_add_col(conn, "mixers", coldef)
+    else:
+        if kind == "view":
+            c.execute("DROP VIEW mixers")
+        elif kind == "index":
+            c.execute("DROP INDEX mixers")
+        c.execute("""
+        CREATE TABLE IF NOT EXISTS mixers (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            placa TEXT,
+            activo INTEGER,
+            habilitado INTEGER,
+            capacidad_m3 REAL,
+            tipo TEXT,
+            unidad_id TEXT
+        )""")
+    c.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_mixers_unidad ON mixers(unidad_id)")
+
+    # ---- dosif ----
+    kind = _object_kind(conn, "dosif")
+    if kind is None:
+        c.execute("""
+        CREATE TABLE dosif (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            codigo TEXT,
+            habilitado INTEGER
+        )""")
+    elif kind == "table":
+        _safe_add_col(conn, "dosif", "codigo TEXT")
+        _safe_add_col(conn, "dosif", "habilitado INTEGER")
+        if not _has_col(conn, "dosif", "codigo"):
+            c.execute("ALTER TABLE dosif RENAME TO dosif_old")
+            c.execute("""
+            CREATE TABLE dosif (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                codigo TEXT,
+                habilitado INTEGER
+            )""")
+            old = set(_table_cols(conn, "dosif_old"))
+            common = [x for x in ["id","codigo","habilitado"] if x in old]
+            if common:
+                cols = ",".join(common)
+                c.execute(f"INSERT OR IGNORE INTO dosif ({cols}) SELECT {cols} FROM dosif_old")
+            c.execute("DROP TABLE dosif_old")
+    else:
+        if kind == "view":
+            c.execute("DROP VIEW dosif")
+        elif kind == "index":
+            c.execute("DROP INDEX dosif")
+        c.execute("""
+        CREATE TABLE IF NOT EXISTS dosif (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            codigo TEXT,
+            habilitado INTEGER
+        )""")
+
+    # ---- agenda ----
+    kind = _object_kind(conn, "agenda")
+    if kind is None:
+        c.execute("""
+        CREATE TABLE agenda (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            cliente TEXT,
+            proyecto TEXT,
+            fecha TEXT,
+            hora_Q TEXT,
+            min_viaje_ida INTEGER,
+            volumen_m3 REAL,
+            requiere_bomba TEXT,
+            dosificadora TEXT,
+            dosif_codigo TEXT,
+            mixer_id INTEGER,
+            hora_R TEXT, hora_S TEXT, hora_T TEXT, hora_U TEXT, hora_V TEXT, hora_W TEXT, hora_X TEXT,
+            estado TEXT,
+            fecha_hora_q TEXT,
+            ciclo_total_min INTEGER,
+            min_viaje_regreso INTEGER
+        )""")
+    elif kind == "table":
+        for coldef in [
+            "cliente TEXT","proyecto TEXT","fecha TEXT","hora_Q TEXT",
+            "min_viaje_ida INTEGER","volumen_m3 REAL","requiere_bomba TEXT",
+            "dosificadora TEXT","dosif_codigo TEXT","mixer_id INTEGER",
+            "hora_R TEXT","hora_S TEXT","hora_T TEXT","hora_U TEXT","hora_V TEXT","hora_W TEXT","hora_X TEXT",
+            "estado TEXT","fecha_hora_q TEXT","ciclo_total_min INTEGER","min_viaje_regreso INTEGER"
+        ]:
+            _safe_add_col(conn, "agenda", coldef)
+    else:
+        if kind == "view":
+            c.execute("DROP VIEW agenda")
+        elif kind == "index":
+            c.execute("DROP INDEX agenda")
+        c.execute("""
+        CREATE TABLE IF NOT EXISTS agenda (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            cliente TEXT,
+            proyecto TEXT,
+            fecha TEXT,
+            hora_Q TEXT,
+            min_viaje_ida INTEGER,
+            volumen_m3 REAL,
+            requiere_bomba TEXT,
+            dosificadora TEXT,
+            dosif_codigo TEXT,
+            mixer_id INTEGER,
+            hora_R TEXT, hora_S TEXT, hora_T TEXT, hora_U TEXT, hora_V TEXT, hora_W TEXT, hora_X TEXT,
+            estado TEXT,
+            fecha_hora_q TEXT,
+            ciclo_total_min INTEGER,
+            min_viaje_regreso INTEGER
+        )""")
+
+    conn.commit()
+# ====== FIN ensure_schema ======
+
 def _sqlite_integrity_ok(conn):
     try:
         row = conn.execute("PRAGMA integrity_check;").fetchone()
