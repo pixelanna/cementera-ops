@@ -8,6 +8,81 @@ import os, json, base64, requests
 # ==== Helpers de integridad y reparación de DB ====
 import time, shutil
 
+def seed_data(conn):
+    """
+    Inserta valores iniciales SOLO si las tablas están vacías.
+    Usa cursor local y asume que ensure_schema(conn) ya corrió.
+    """
+    cur = conn.cursor()
+
+    # --- parametros por defecto ---
+    try:
+        n = cur.execute("SELECT COUNT(*) FROM parametros").fetchone()[0]
+    except sqlite3.Error:
+        n = 0
+    if n == 0:
+        cur.executemany(
+            "INSERT OR IGNORE INTO parametros (nombre, valor) VALUES (?,?)",
+            [
+                ("Fecha_inicio", "2025-12-01"),
+                ("Dias_planificados", "7"),
+                ("Intervalo_min", "15"),
+                ("Capacidad_mixer_m3", "8.5"),
+                ("Tiempo_carga_min", "11"),
+                ("Tiempo_descarga_min", "20"),
+                ("Margen_lavado_min", "5"),
+                ("Bombas_disponibles", "3"),
+                ("Dosificadoras_en_planta", "2"),
+                ("Tiempo_cambio_obra_min", "4"),
+                ("Mixers_SANNY", "2"),
+                ("Capacidad_SANNY_m3", "10"),
+            ],
+        )
+
+    # --- dosificadoras por defecto ---
+    try:
+        n = cur.execute("SELECT COUNT(*) FROM dosif").fetchone()[0]
+    except sqlite3.Error:
+        n = 0
+    if n == 0:
+        cur.executemany(
+            "INSERT OR IGNORE INTO dosif (codigo, habilitado) VALUES (?,?)",
+            [("DF-01", 1), ("DF-06", 1)]
+        )
+
+    # --- mixers por defecto ---
+    try:
+        n = cur.execute("SELECT COUNT(*) FROM mixers").fetchone()[0]
+    except sqlite3.Error:
+        n = 0
+    if n == 0:
+        seed_mixers = [
+            ("218 25", "HAA1234", 1, 10.0, "SANY"),
+            ("218 27", "HAA2345", 1, 10.0, "SANY"),
+            ("MX 25", "HAA3456", 1, 8.5, "STD"),
+            ("MX 29", "HAA4567", 1, 8.5, "STD"),
+            ("MX 30", "HAA5678", 1, 8.5, "STD"),
+            ("MX 31", "HAA6789", 1, 8.5, "STD"),
+            ("MX 32", "HAA7890", 1, 8.5, "STD"),
+            ("MX 33", "HAA8901", 1, 8.5, "STD"),
+            ("MX 34", "HAA9012", 1, 8.5, "STD"),
+            ("MX 35", "HAA0123", 1, 8.5, "STD"),
+            ("218 16", "HAA2123", 1, 8.5, "STD"),
+            ("218 01", "HAA3123", 1, 8.5, "STD"),
+            ("TEA 1249", "HAA4123", 1, 8.5, "STD"),
+            ("TEA 1250", "HAA4124", 1, 8.5, "STD"),
+        ]
+        for u, placa, hab, cap, tipo in seed_mixers:
+            cur.execute(
+                """
+                INSERT OR IGNORE INTO mixers (unidad_id, placa, habilitado, capacidad_m3, tipo)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (u, placa, hab, cap, tipo),
+            )
+
+    conn.commit()
+
 # ====== SCHEMA HELPERS + ensure_schema (defínelos antes de usarlos) ======
 def _object_kind(conn, name: str):
     row = conn.execute("SELECT type FROM sqlite_master WHERE name=?", (name,)).fetchone()
