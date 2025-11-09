@@ -1535,7 +1535,7 @@ with tabs[3]:
         st.markdown("### 🧾 Resumen del día por proyecto")
         try:
             st.dataframe(resumen, use_container_width=True, hide_index=True)
-           except TypeError:
+               except TypeError:
         st.dataframe(resumen.style.hide(axis="index"), use_container_width=True)
         st.markdown("---")
         
