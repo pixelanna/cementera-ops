@@ -533,6 +533,7 @@ except sqlite3.DatabaseError:
 
 # Cargar datos iniciales
 seed_data(conn)
+c = conn.cursor()
 
 # ---------------------------------------------------
 # Conexión a SQLite (cacheada para Streamlit Cloud)
@@ -543,8 +544,10 @@ def get_conn():
     conn = sqlite3.connect("cementera.db", check_same_thread=False)
     return conn
 
-conn = get_conn()
-c = conn.cursor()
+@st.cache_resource
+def get_conn():
+    # Usa SIEMPRE el archivo definido en secrets: DB_FILE
+    return sqlite3.connect(DB_FILE, check_same_thread=False)
 
 # ---------------------------------------------------
 # Asegurar esquema (robusto ante conflictos previos)
@@ -558,30 +561,6 @@ def _table_cols(conn, table):
 
 def _has_col(conn, table, col):
     return col in _table_cols(conn, table)
-
-def ensure_schema(conn):
-    c = conn.cursor()
-
-   # ---------------------------------------------------
-# Asegurar esquema (robusto ante conflictos previos)
-# ---------------------------------------------------
-def _object_kind(conn, name: str):
-    row = conn.execute("SELECT type FROM sqlite_master WHERE name=?", (name,)).fetchone()
-    return row[0] if row else None  # "table" | "view" | "index" | None
-
-def _table_cols(conn, table: str):
-    try:
-        return [r[1] for r in conn.execute(f"PRAGMA table_info({table})").fetchall()]
-    except Exception:
-        return []
-
-def _has_col(conn, table: str, col: str) -> bool:
-    return col in _table_cols(conn, table)
-
-def _safe_add_col(conn, table: str, coldef: str):
-    colname = coldef.split()[0]
-    if not _has_col(conn, table, colname):
-        conn.execute(f"ALTER TABLE {table} ADD COLUMN {coldef}")
 
 def ensure_schema(conn):
     c = conn.cursor()
@@ -832,29 +811,6 @@ def recalc_and_update_agenda(conn, agenda_id, fecha_str, hora_Q, min_viaje_ida, 
     except Exception:
         pass
 
-def get_param(conn, name: str, default=None):
-    """
-    Lee un parámetro por nombre (case-insensitive).
-    Si no existe y se pasa default, lo crea y devuelve default.
-    """
-    cur = conn.cursor()
-    cur.execute("SELECT valor FROM parametros WHERE lower(nombre)=lower(?)", (name,))
-    row = cur.fetchone()
-    if row is not None:
-        return row[0]
-    if default is not None:
-        cur.execute("INSERT INTO parametros (nombre, valor) VALUES (?, ?)", (name, default))
-        conn.commit()
-
-        ok, msg = backup_db_to_gist()
-        try:
-            st.toast("✅ Respaldo OK en GitHub" if ok else f"⚠️ {msg}")
-        except Exception:
-            pass
-        
-        return default
-    raise ValueError(f"Falta el parámetro '{name}'. Agrega este parámetro en la pestaña Parámetros.")
-
 def ensure_required_params(conn):
     """Garantiza que existan los parámetros clave con defaults sensatos."""
     defaults = {
@@ -1091,7 +1047,7 @@ def seed_data(conn):
     except Exception:
         pass
 
-seed_data()
+seed_data(conn)
 ensure_required_params(conn)
 
 # ---------------------------------------------------
@@ -1576,12 +1532,12 @@ with tabs[3]:
         )
         resumen.rename(columns={"proyecto": "Proyecto", "hora_Q": "Hora en obra (Q)"}, inplace=True)
     
-        st.markdown("### 🧾 Resumen del día por proyecto")
-        try:
-            st.dataframe(resumen, use_container_width=True, hide_index=True)
-        except TypeError:
-            st.dataframe(resumen.style.hide(axis="index"), use_container_width=True)
-        st.markdown("---")
+    st.markdown("### 🧾 Resumen del día por proyecto")
+    try:
+        st.dataframe(resumen, use_container_width=True, hide_index=True)
+       except TypeError:
+    st.dataframe(resumen.style.hide(axis="index"), use_container_width=True)
+    st.markdown("---")
     
         # --- Agenda por mixer (slots 15')
 st.markdown("### 🚛 Agenda por Mixer (15 min)")
