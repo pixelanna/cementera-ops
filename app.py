@@ -1532,13 +1532,13 @@ with tabs[3]:
         )
         resumen.rename(columns={"proyecto": "Proyecto", "hora_Q": "Hora en obra (Q)"}, inplace=True)
     
-    st.markdown("### 🧾 Resumen del día por proyecto")
-    try:
-        st.dataframe(resumen, use_container_width=True, hide_index=True)
-       except TypeError:
-    st.dataframe(resumen.style.hide(axis="index"), use_container_width=True)
-    st.markdown("---")
-    
+        st.markdown("### 🧾 Resumen del día por proyecto")
+        try:
+            st.dataframe(resumen, use_container_width=True, hide_index=True)
+           except TypeError:
+        st.dataframe(resumen.style.hide(axis="index"), use_container_width=True)
+        st.markdown("---")
+        
         # --- Agenda por mixer (slots 15')
     st.markdown("### 🚛 Agenda por Mixer (15 min)")
 
